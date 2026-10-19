@@ -10,8 +10,8 @@ Pipeline (one streaming query):
       -> groupBy(start_date, trip_id).applyInPandasWithState(TripTracker)   [trip_state.py]
          emits one row per stop once the watermark passes the moment the stop was passed
       -> foreachBatch: join the active static schedule (broadcast) on
-         (service_date, trip_id, stop_sequence), compute delay_seconds, append to Iceberg
-         idempotently (batch id stored in the snapshot summary)
+         (service_date, trip_id, stop_sequence), compute delay_seconds, and write with an
+         insert-only MERGE on that key (exactly-once, never a duplicate stop visit)
 
 Times past 24:00 (problem 2): scheduled_time = service-day start + arrival_secs, where the
 service-day start is "noon minus 12h" local time on the trip's start_date (the GTFS
@@ -285,42 +285,39 @@ def enrich(finals: DataFrame, schedule: DataFrame) -> DataFrame:
 
 
 class SilverSink:
-    """foreachBatch sink: enrich + append, idempotent per (query run, batch id).
+    """foreachBatch sink: enrich, then insert-only MERGE keyed on the stop visit.
 
-    A micro-batch can be re-executed after a crash. Each append stores the streaming query id
-    and batch id in the Iceberg snapshot summary; a batch already present is skipped, which
-    makes the foreachBatch sink exactly-once.
+    `MERGE ... WHEN NOT MATCHED THEN INSERT` on (service_date, trip_id, stop_sequence) makes
+    "one row per stop visit" a property of the table, not just of the state machine:
+      * a micro-batch re-executed after a crash inserts nothing new (exactly-once), and
+      * a stop the tracker emits twice (state lost on a checkpoint reset, or the pre-fix
+        tombstone bug that re-emitted trips reappearing hours later) is not duplicated.
+    Spark plans an insert-only MERGE as anti-join + append, so no data files are rewritten;
+    the anti-join reads only the batch's service_date partitions.
     """
 
     def __init__(self, spark: SparkSession, table: str, checkpoint: str, schedule: ScheduleCache):
         self.spark, self.table, self.checkpoint, self.schedule = spark, table, checkpoint, schedule
-        self._run_id = None
-
-    def run_id(self) -> str:
-        if self._run_id is None:  # the query id Spark persists in the checkpoint; stable across restarts
-            self._run_id = json.loads(read_small_file(self.spark, f"{self.checkpoint}/metadata"))["id"]
-        return self._run_id
-
-    def already_committed(self, batch_id: int) -> bool:
-        return self.spark.sql(
-            f"SELECT 1 FROM {self.table}.snapshots "
-            f"WHERE summary['silver.query-id'] = '{self.run_id()}' AND summary['silver.batch-id'] = '{batch_id}' LIMIT 1"
-        ).count() > 0
 
     def __call__(self, finals: DataFrame, batch_id: int) -> None:
         finals = finals.persist()
         try:
             if finals.isEmpty():
                 return
-            if self.already_committed(batch_id):
-                log.warning("batch %d already committed to %s; skipping replay", batch_id, self.table)
-                return
             dates = {r.start_date for r in finals.select("start_date").distinct().collect()}
-            out = enrich(finals, self.schedule.get(dates))
-            (out.writeTo(self.table)
-                .option("snapshot-property.silver.query-id", self.run_id())
-                .option("snapshot-property.silver.batch-id", str(batch_id))
-                .append())
+            view = f"silver_batch_{batch_id}"
+            enrich(finals, self.schedule.get(dates)).createOrReplaceTempView(view)
+            day_list = ", ".join(f"DATE'{d[:4]}-{d[4:6]}-{d[6:]}'" for d in sorted(dates))
+            batch_session = finals.sparkSession  # foreachBatch runs on a cloned session; its temp views live there
+            batch_session.sql(f"""
+                MERGE INTO {self.table} t
+                USING {view} s
+                ON t.service_date IN ({day_list})
+                   AND t.service_date = s.service_date AND t.trip_id = s.trip_id
+                   AND t.stop_sequence = s.stop_sequence
+                WHEN NOT MATCHED THEN INSERT *
+            """)
+            batch_session.catalog.dropTempView(view)
         finally:
             finals.unpersist()
 

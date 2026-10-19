@@ -17,7 +17,7 @@ from pyhive import hive
 
 HERE = Path(__file__).resolve().parent
 SUITE_PATH = HERE / "expectations" / "silver_stop_delays.json"
-RESULTS_DIR = HERE / "results"
+RESULTS_DIR = Path(os.environ.get("QUALITY_RESULTS_DIR", HERE / "results"))
 TIMESTAMP_COLS = ["scheduled_time", "observed_time", "first_event_time", "final_event_time", "passed_at",
                   "ingest_time", "processed_time"]
 INT_COLS = ["direction_id", "stop_sequence", "delay_seconds", "scheduled_hour_local",

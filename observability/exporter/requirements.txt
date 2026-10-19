@@ -1,0 +1,4 @@
+prometheus-client==0.21.0
+confluent-kafka==2.5.3
+pyarrow==17.0.0
+PyHive[hive_pure_sasl]==0.7.0

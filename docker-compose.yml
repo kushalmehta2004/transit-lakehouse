@@ -275,9 +275,139 @@ services:
       spark-thrift:
         condition: service_healthy
 
+  # ---------------------------------------------------------------- phase 5
+  # Airflow in ONE container (scheduler + webserver + triggerer, LocalExecutor), metadata DB in the
+  # existing Postgres. UI: http://localhost:8081 (admin / admin)
+  airflow:
+    build:
+      context: .
+      dockerfile: orchestration/Dockerfile
+    image: transit-lakehouse/airflow:latest
+    container_name: airflow
+    environment:
+      CONNECTION_CHECK_MAX_COUNT: "0"   # image's DB pre-check would fail before start_airflow.sh creates the DB
+      AIRFLOW_DB_USER: ${CATALOG_DB_USER:-iceberg}
+      AIRFLOW_DB_PASSWORD: ${CATALOG_DB_PASSWORD:-iceberg}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${CATALOG_DB_USER:-iceberg}:${CATALOG_DB_PASSWORD:-iceberg}@iceberg-catalog-db:5432/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "False"
+      AIRFLOW__CORE__PARALLELISM: "4"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: "30"
+      AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      AIRFLOW__METRICS__STATSD_ON: "True"
+      AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+      AIRFLOW__METRICS__STATSD_PORT: "9125"
+      AIRFLOW__METRICS__STATSD_PREFIX: airflow
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+      SPARK_THRIFT_HOST: spark-thrift
+      SPARK_THRIFT_PORT: "10000"
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      DBT_PROFILES_DIR: /work/dbt
+      # scheduled runs keep dbt/GE output in container-owned paths, not the shared bind mounts
+      DBT_TARGET_PATH: /tmp/dbt/target
+      DBT_LOG_PATH: /tmp/dbt/logs
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+      QUALITY_RESULTS_DIR: /opt/airflow/quality-results
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./orchestration/dags:/opt/airflow/dags
+      - ./orchestration/scripts:/opt/airflow/scripts
+      - ./dbt:/work/dbt
+      - ./quality:/work/quality
+      - airflow-logs:/opt/airflow/logs
+      - quality-results:/opt/airflow/quality-results
+    depends_on:
+      iceberg-catalog-db:
+        condition: service_healthy
+      spark-thrift:
+        condition: service_healthy
+      statsd-exporter:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health | grep -q '\"scheduler\": {\"latest_scheduler_heartbeat\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
+  statsd-exporter:   # Airflow StatsD -> Prometheus
+    image: prom/statsd-exporter:v0.27.2
+    container_name: statsd-exporter
+    command: ["--statsd.mapping-config=/etc/statsd/mapping.yml"]
+    volumes:
+      - ./observability/statsd_mapping.yml:/etc/statsd/mapping.yml:ro
+    restart: unless-stopped
+
+  # Consumer lag, DLQ depth, end-to-end latency, freshness, quality gate (read-only)
+  pipeline-exporter:
+    build: ./observability/exporter
+    image: transit-lakehouse/pipeline-exporter:latest
+    container_name: pipeline-exporter
+    environment:
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-redpanda:9092}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      SPARK_THRIFT_HOST: spark-thrift
+      QUALITY_RESULT_PATH: /quality/results/latest.json
+    volumes:
+      - quality-results:/quality/results:ro   # written by the Airflow ge_checkpoint task
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      spark-thrift:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:   # http://localhost:9090  (alerts: /alerts)
+    image: prom/prometheus:v2.53.2
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:   # http://localhost:3000  (anonymous view; admin / admin to edit)
+    image: grafana/grafana:11.2.2
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   redpanda-data:
   minio-data:
   # >>> INSERTION POINT: append new volumes below this line <<<
   schedule-cache:   # phase 1
   iceberg-catalog-data:   # phase 2
+  airflow-logs:           # phase 5
+  prometheus-data:        # phase 5
+  grafana-data:           # phase 5
+  quality-results:        # phase 5

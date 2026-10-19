@@ -1,1 +1,68 @@
-# TODO phase 5
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: poller                 # events produced, poll errors/latency, DLQ sends
+    static_configs:
+      - targets: ["poller:8000"]
+
+  - job_name: pipeline-exporter      # consumer lag, DLQ depth, e2e latency, freshness, quality gate
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["pipeline-exporter:9200"]
+
+  - job_name: spark                  # Spark PrometheusServlet (enabled in streaming/spark_session.py)
+    metrics_path: /metrics/prometheus/
+    static_configs:
+      - targets: ["spark:4040", "spark-silver:4040", "spark-thrift:4040"]
+    metric_relabel_configs:
+      # metrics_<app>_driver_spark_streaming_<query>_<metric>_Value  ->  spark_streaming_<metric>{app, query}
+      - source_labels: [__name__]
+        regex: "metrics_(bronze_job|silver_job|spark_thrift)_driver_spark_streaming_(.+)_(inputRate_total|processingRate_total|latency|eventTime_watermark|states_rowsTotal|states_usedBytes)_Value"
+        target_label: app
+        replacement: "$1"
+      - source_labels: [__name__]
+        regex: "metrics_(bronze_job|silver_job|spark_thrift)_driver_spark_streaming_(.+)_(inputRate_total|processingRate_total|latency|eventTime_watermark|states_rowsTotal|states_usedBytes)_Value"
+        target_label: query
+        replacement: "$2"
+      - source_labels: [__name__]
+        regex: "metrics_(bronze_job|silver_job|spark_thrift)_driver_spark_streaming_(.+)_(inputRate_total|processingRate_total|latency|eventTime_watermark|states_rowsTotal|states_usedBytes)_Value"
+        target_label: __name__
+        replacement: "spark_streaming_$3"
+      # drop the hundreds of other Dropwizard series
+      - source_labels: [__name__]
+        regex: "spark_streaming_.*"
+        action: keep
+
+  - job_name: spark-executors        # local mode: the "driver" executor = the whole Spark JVM
+    metrics_path: /metrics/executors/prometheus
+    static_configs:
+      - targets: ["spark:4040", "spark-silver:4040", "spark-thrift:4040"]
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "metrics_executor_JVMHeapMemory_bytes"
+        action: keep
+      - source_labels: [application_name]
+        target_label: app
+      - source_labels: [__name__]
+        target_label: __name__
+        replacement: "spark_driver_jvm_heap_used_bytes"
+      - regex: "application_id|application_name|executor_id"   # application_id changes every restart
+        action: labeldrop
+
+  - job_name: airflow                # Airflow StatsD -> statsd-exporter
+    static_configs:
+      - targets: ["statsd-exporter:9102"]
+
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

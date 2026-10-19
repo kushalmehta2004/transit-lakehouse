@@ -1,0 +1,47 @@
+groups:
+  - name: transit-lakehouse
+    rules:
+      # The PRD's lag alert. Bronze should be seconds behind the feed (p99 ~10 s); minutes means the
+      # poller, Kafka or the bronze job has stopped. Freshness (not just consumer lag) also catches
+      # a dead poller, where Kafka lag stays 0 but no new data arrives.
+      - alert: BronzeLagHigh
+        expr: max(pipeline_freshness_seconds{table="bronze.vehicle_positions"}) > 120
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "Bronze is {{ $value | humanizeDuration }} behind the live feed"
+          description: "No fresh data reached bronze for over 2 min (for 5 min). Check events/sec (poller) and Kafka consumer lag (Spark) on the dashboard."
+
+      # Silver is ~16 min behind BY DESIGN (15-min watermark). Alert only well beyond that.
+      - alert: SilverLagHigh
+        expr: max(pipeline_freshness_seconds{table="silver.stop_delays"}) > 600 or max(pipeline_e2e_latency_seconds{stage="silver",quantile="0.5"}) > 1500
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Silver is lagging beyond its designed ~16 min"
+          description: "Either no silver writes for 10 min, or median ingest->silver latency > 25 min."
+
+      - alert: KafkaConsumerLagHigh
+        expr: sum by (query) (kafka_consumer_lag_messages) > 20000
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.query }} is {{ $value }} messages behind Kafka"
+
+      - alert: DeadLetterQueueGrowing
+        expr: sum(increase(kafka_topic_high_watermark{topic=~".*\\.dlq"}[10m])) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} records sent to the DLQ in the last 10 min"
+
+      - alert: PipelineDagFailed
+        expr: sum(increase(airflow_dagrun_duration_seconds_count{dag_id="transit_lakehouse_pipeline",state="failed"}[30m])) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "transit_lakehouse_pipeline failed in the last 30 min (dbt or quality gate)"
+
+      - alert: QualityGateFailed
+        expr: quality_gate_success == 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Latest Great Expectations checkpoint on silver failed"

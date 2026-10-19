@@ -31,6 +31,9 @@ def main() -> None:
     spark = build_spark("spark_thrift", {
         "spark.driver.extraClassPath": ":".join(f"{IVY_DIR}/jars/{j}" for j in STARTUP_CLASSPATH_JARS),
         "spark.hadoop.hive.server2.thrift.port": os.environ.get("THRIFT_PORT", "10000"),
+        # Long-lived server reading tables that streaming jobs commit to every 10-30 s: Iceberg's
+        # catalog cache would keep serving an old snapshot to dbt / GE, so always load the latest.
+        "spark.sql.catalog.lakehouse.cache-enabled": "false",
     })
     spark.sql("CREATE NAMESPACE IF NOT EXISTS default")  # every JDBC session starts with USE default
     jvm = spark.sparkContext._jvm

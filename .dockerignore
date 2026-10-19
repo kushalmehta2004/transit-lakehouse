@@ -1,7 +1,8 @@
-# Root-context builds (dbt/Dockerfile) only need dbt/ and quality/.
+# Root-context builds (dbt/Dockerfile, orchestration/Dockerfile) only need these folders.
 *
 !dbt/
 !quality/
+!orchestration/
 dbt/target/
 dbt/logs/
 quality/results/

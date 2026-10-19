@@ -29,6 +29,9 @@ docker compose ps         # redpanda + minio should show (healthy)
 | Spark UI (silver job) | http://localhost:4041 | — |
 | Spark Thrift (JDBC, for dbt/BI) | jdbc:hive2://localhost:10000 · UI http://localhost:4042 | — |
 | dbt docs (when served) | http://localhost:8085 | — |
+| Airflow | http://localhost:8081 | admin / admin |
+| Grafana dashboard | http://localhost:3000 | anonymous view; admin / admin to edit |
+| Prometheus (alerts at /alerts) | http://localhost:9090 | — |
 
 Stop with `docker compose down`, or wipe all data with `docker compose down -v`.
 
@@ -84,7 +87,7 @@ docker compose exec spark python sql.py "SELECT count(*) FROM bronze.vehicle_pos
 ```
 bronze.trip_updates ─▶ watermark(event_time, 15 min) ─▶ dedup(trip, start_date, vehicle, event_time)
   ─▶ explode stops ─▶ per-trip state machine (trip_state.py) ─▶ join active schedule (broadcast)
-  ─▶ delay_seconds ─▶ idempotent Iceberg append
+  ─▶ delay_seconds ─▶ insert-only MERGE on (service_date, trip_id, stop_sequence)
 ```
 
 **What "observed arrival" means.** MBTA publishes only *predicted* times, and it drops a stop from a trip's update once the vehicle has passed it. Silver therefore records the **last prediction made before the stop disappeared**. Validated against GPS: of 14,394 visits where the vehicle reported `STOPPED_AT` that stop, the median difference was 6 s and **99.6% were within 60 s**. Passed stops average about 94 predictions each.
@@ -105,7 +108,7 @@ bronze.trip_updates ─▶ watermark(event_time, 15 min) ─▶ dedup(trip, star
 - **The trade-off is latency.** A stop reaches silver about 16.5 min (p50) after the vehicle passes, because of the watermark. Bronze stays near real time at p50 ≈ 5 s.
 
 ### Guarantees and state
-- **Exactly-once.** Each Iceberg append stores the query id and batch id in its snapshot summary, and a replayed batch is skipped. A `kill -9` produced 0 duplicate stop visits.
+- **Exactly-once, with one row per stop visit enforced by the table.** The sink writes with `MERGE … WHEN NOT MATCHED THEN INSERT` on `(service_date, trip_id, stop_sequence)`, so a replayed batch inserts nothing. A stop emitted twice is never duplicated either; that happened before the tombstone fix (see phase 4). Spark plans an insert-only MERGE as anti-join + append, so no files are rewritten. A `kill -9` produced 0 duplicate stop visits.
 - **State is bounded.** Spark keeps about 2.5k trips and about 150k dedup keys (the 15-minute window) in RocksDB, flat over hours. A trip's state is removed one hour after its last update.
 
 Run the tests with:
@@ -121,7 +124,7 @@ dbt connects to the lakehouse through a **Spark Thrift server** (`spark-thrift`,
 
 ```
 silver.stop_delays ─▶ stg_stop_delays (ephemeral: passed, schedule-matched, regular trips)
-                        ─▶ gold.route_lateness_by_hour   (incremental MERGE: route × service day × hour)
+                        ─▶ gold.route_lateness_by_hour   (incremental insert_overwrite: route × service day × hour)
                               ─▶ gold.chronically_late_routes (rolling 7 days, thresholds in dbt_project.yml)
 static GTFS routes ─▶ gold.dim_routes
 ```
@@ -132,7 +135,7 @@ static GTFS routes ─▶ gold.dim_routes
 | `chronically_late_routes` | route | routes with avg delay ≥ 3 min or ≥ 25% of visits > 5 min late over 7 days, ranked, with worst hour |
 | `dim_routes` | route | names and mode (bus, subway, …) |
 
-`route_lateness_by_hour` is incremental. Each run re-aggregates only the trailing service day and MERGEs it into Iceberg, so the full history is never rebuilt.
+`route_lateness_by_hour` is incremental. Each run re-aggregates only the trailing service day and **overwrites those `service_date` partitions** (dynamic partition overwrite), so the full history is never rebuilt. It started as a MERGE, but the phase 5 drill showed why that was wrong: a MERGE only upserts groups present in the new aggregate, so a group whose silver rows were deleted lingered in gold forever.
 
 *Caveat:* MBTA runs the subway by frequency rather than strict timetable, so "delay vs. schedule" is most meaningful for buses and commuter rail.
 
@@ -154,6 +157,89 @@ docker compose run --rm -p 8085:8085 dbt dbt docs serve --host 0.0.0.0 --port 80
 
 *dbt-spark + Iceberg note:* Iceberg v2 tables don't support `SHOW TABLE EXTENDED` (SPARK-33393). Because of that, dbt-spark's fallback produced an empty docs catalog. `dbt/macros/describe_table_extended_without_caching.sql` fixes the fallback's output format so the docs show every column.
 
+## Orchestration + observability (phase 5)
+
+### Airflow (`orchestration/`)
+
+Airflow runs as **one container** using `airflow standalone` with LocalExecutor. Its metadata lives in the existing Postgres, and dbt and Great Expectations run in an isolated venv inside the image.
+
+| DAG | Schedule | Tasks |
+|---|---|---|
+| `transit_lakehouse_pipeline` | every 15 min | `dbt_run` → `dbt_test` → `ge_checkpoint` → `mark_refresh`; `alert_on_failure` runs only if something failed |
+| `lakehouse_maintenance` | hourly | per table: `rewrite_data_files` (compaction) → `expire_snapshots` (> 24 h, keep ≥ 50) |
+
+- **Safe to retry.** dbt merges by key, the tests only read, and `mark_refresh` MERGEs on `run_id` into `gold.pipeline_refreshes`. `max_active_runs=1` prevents overlapping runs.
+- **Failures are red.** When something fails, `alert_on_failure` logs an `ALERT` line and fails itself. Because it's the DAG's only leaf, the whole run ends **red**. That run is then picked up by the `PipelineDagFailed` alert through Airflow's StatsD metrics.
+- **Compaction keeps tables healthy.** Streaming writes leave about 1,000 small files per table every few hours, and each maintenance run brings that down to a handful (bronze.vehicle_positions went from 1,043 files to 2). Silver reads bronze as a stream and skips compaction snapshots, so it's unaffected.
+
+### Prometheus + Grafana (`observability/`)
+
+| Source | What it provides |
+|---|---|
+| poller `/metrics` | events produced, poll errors and latency, DLQ sends, feed age |
+| Spark `PrometheusServlet` | per query: input and processing rate, batch duration, watermark, state rows; driver heap |
+| **pipeline-exporter** (read-only) | **Kafka consumer lag** (Kafka high watermark minus the offsets in the Spark checkpoint, since Spark doesn't commit to a consumer group); **DLQ depth**; **end-to-end latency** (ingest → bronze, ingest → silver); **freshness**; latest quality-gate result |
+| statsd-exporter | Airflow DAG and task outcomes and durations |
+
+The Grafana dashboard "Transit lakehouse pipeline" (http://localhost:3000) is generated by `observability/grafana/build_dashboard.py`. It's laid out as questions:
+1. Is data coming in?
+2. Is Spark keeping up?
+3. How old is the data?
+4. Is silver's state bounded?
+5. Are the DAG and its quality gates healthy?
+
+**Alerts** (`observability/alerts.yml`, shown at http://localhost:9090/alerts and in the dashboard):
+
+| Alert | Fires when |
+|---|---|
+| `BronzeLagHigh` (the PRD's lag alert) | no fresh data in bronze for > 2 min, sustained 5 min |
+| `SilverLagHigh` | silver is well beyond its designed ~16 min: no writes for 10 min, or p50 > 25 min |
+| `KafkaConsumerLagHigh` | bronze is > 20k messages behind Kafka for 5 min |
+| `DeadLetterQueueGrowing` | anything lands in a DLQ |
+| `PipelineDagFailed` / `QualityGateFailed` | a pipeline run or the GE checkpoint failed |
+
+**How to read a slowdown.** If events/sec drops to 0 while freshness climbs and consumer lag stays at 0, the **source stopped**. If events/sec is normal while consumer lag climbs, **Spark is behind**. If both are normal but silver freshness climbs, **the silver job stopped**.
+
+### Acceptance drills
+
+**Drill 1: forced quality failure.** A silver row with a 10-hour delay was injected, then the pipeline was triggered.
+
+| Time (UTC) | Result |
+|---|---|
+| 21:26:47 | `dbt_test` FAILED: `delay_in_plausible_range` caught it in silver and again in gold |
+| 21:26:48 | `ge_checkpoint` and `mark_refresh` `upstream_failed`; `alert_on_failure` failed, so the run went **red** |
+| 21:27:15 | `PipelineDagFailed` **firing** in Prometheus and Grafana |
+| 21:28:15 | GE checkpoint `FAILED (14/15)` → `quality_gate_success = 0` → `QualityGateFailed` **firing** |
+| 21:35:15 | after removing the row: GE 15/15 and the next run **green** |
+
+The task log line was: `ALERT transit_lakehouse_pipeline run drill1_… FAILED; failed tasks: ['ge_checkpoint', 'dbt_test', 'mark_refresh']`
+
+The drill exposed a real bug in gold. The MERGE-based incremental model kept the bad row's aggregate after the row was deleted, which is why the model now uses `insert_overwrite`.
+
+**Drill 2: pause the poller and diagnose from the dashboard alone.**
+
+| Time after `docker compose stop poller` | Events/sec | Bronze freshness | Kafka consumer lag | `BronzeLagHigh` |
+|---|---|---|---|---|
+| 0 | ~150 | 14 s | 0 | – |
+| +1.5 min | 0 / no data | 89 s | 0 | – |
+| +3 min | 0 | 179 s | 0 | **pending** |
+| +8 min | 0 | 478 s | 0 | **firing** |
+| restart +30 s | ~156 | 15 s (recovered in 28 s) | 0 | resolved |
+
+Events/sec fell to 0, freshness climbed second for second, and consumer lag stayed at 0, which means **the source stopped, not Spark**. The DLQ was unchanged across the restart.
+
+
+### Measured footprint
+The whole stack uses **about 11.3 GB**:
+- spark-silver 4.3 GB
+- spark-thrift 2.7 GB
+- spark bronze 1.7 GB
+- airflow 1.1 GB
+- minio 0.8 GB
+- everything else under 0.3 GB each
+
+Phase 5 added only about 1.3 GB for Airflow, Prometheus, Grafana, and both exporters.
+
 ## Build status
 
 | Phase | Status |
@@ -163,7 +249,7 @@ docker compose run --rm -p 8085:8085 dbt dbt docs serve --host 0.0.0.0 --port 80
 | 2 — Bronze streaming | ✅ |
 | 3 — Silver join + delay | ✅ |
 | 4 — Gold models + quality | ✅ |
-| 5 — Airflow + observability | ⏳ |
+| 5 — Airflow + observability | ✅ |
 | 6 — Load test + K8s | ⏳ |
 
 ## Measured numbers
