@@ -104,7 +104,44 @@ services:
   # ---------------------------------------------------------------- phase 1+
   # >>> INSERTION POINT: append new service blocks below this line <<<
 
+  # ---------------------------------------------------------------- phase 1
+  poller:
+    build: ./ingestion
+    image: transit-lakehouse/poller:latest
+    container_name: poller
+    environment:
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-redpanda:9092}
+      GTFS_RT_VEHICLE_POSITIONS_URL: ${GTFS_RT_VEHICLE_POSITIONS_URL:-https://cdn.mbta.com/realtime/VehiclePositions.pb}
+      GTFS_RT_TRIP_UPDATES_URL: ${GTFS_RT_TRIP_UPDATES_URL:-https://cdn.mbta.com/realtime/TripUpdates.pb}
+      GTFS_STATIC_URL: ${GTFS_STATIC_URL:-https://cdn.mbta.com/MBTA_GTFS.zip}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-15}
+      KAFKA_RAW_PARTITIONS: ${KAFKA_RAW_PARTITIONS:-6}
+      SCHEDULE_REFRESH_HOURS: ${SCHEDULE_REFRESH_HOURS:-24}
+      SCHEDULE_CACHE_DIR: /data/schedule
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      METRICS_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - schedule-cache:/data/schedule
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/metrics', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   redpanda-data:
   minio-data:
   # >>> INSERTION POINT: append new volumes below this line <<<
+  schedule-cache:   # phase 1

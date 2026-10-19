@@ -1,1 +1,6 @@
-# TODO phase 1
+confluent-kafka==2.5.3
+gtfs-realtime-bindings==1.0.0
+protobuf==5.28.3
+requests==2.32.3
+prometheus-client==0.21.0
+pyarrow==17.0.0
