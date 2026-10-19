@@ -25,6 +25,7 @@ docker compose ps         # redpanda + minio should show (healthy)
 | MinIO console | http://localhost:9001 | minioadmin / minioadmin |
 | Kafka (from host) | localhost:19092 | — |
 | Poller metrics | http://localhost:8000/metrics | — |
+| Spark UI (bronze job) | http://localhost:4040 | — |
 
 Stop with `docker compose down`, or wipe all data with `docker compose down -v`.
 
@@ -54,13 +55,32 @@ Stop with `docker compose down`, or wipe all data with `docker compose down -v`.
 
 Run the unit tests with `docker compose run --rm poller python -m pytest -q tests`.
 
+## Bronze streaming (phase 2)
+
+`streaming/bronze_job.py` runs two Spark Structured Streaming queries that land each raw topic in Iceberg unchanged. Each row is parsed against an explicit schema and carries Kafka lineage columns: `kafka_partition`, `kafka_offset`, and `kafka_timestamp`.
+
+| Table | Source topic | Partitioning |
+|---|---|---|
+| `bronze.vehicle_positions` | `vehicle_positions.raw` | `days(event_time)` |
+| `bronze.trip_updates` | `trip_updates.raw` | `days(event_time)`; `stop_time_updates` stays a nested array |
+
+- **Catalog:** an Iceberg JDBC catalog in Postgres (`iceberg-catalog-db`), with the data in `s3a://lakehouse/warehouse/`. The simpler file-based catalog was ruled out because MinIO has no atomic rename, so concurrent writers would be unsafe.
+- **Checkpoints:** stored in `s3a://lakehouse/checkpoints/bronze_<feed>/`. Exactly-once comes from Kafka offsets in the checkpoint plus Iceberg's per-batch commit tracking. This was verified with zero duplicate `(partition, offset)` pairs after both a clean restart and a `kill -9`.
+- **Triggers:** micro-batches every 10 s, each coalesced into one file per table per commit.
+
+Query the lakehouse with:
+
+```bash
+docker compose exec spark python sql.py "SELECT count(*) FROM bronze.vehicle_positions"
+```
+
 ## Build status
 
 | Phase | Status |
 |---|---|
 | 0 — Infra skeleton | ✅ |
 | 1 — GTFS poller → Kafka | ✅ |
-| 2 — Bronze streaming | ⏳ |
+| 2 — Bronze streaming | ✅ |
 | 3 — Silver join + delay | ⏳ |
 | 4 — Gold models + quality | ⏳ |
 | 5 — Airflow + observability | ⏳ |

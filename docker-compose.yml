@@ -140,8 +140,60 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # ---------------------------------------------------------------- phase 2
+  # Iceberg JDBC catalog: table -> current metadata pointer, with atomic commits.
+  iceberg-catalog-db:
+    image: postgres:16.4-alpine
+    container_name: iceberg-catalog-db
+    environment:
+      POSTGRES_DB: iceberg
+      POSTGRES_USER: ${CATALOG_DB_USER:-iceberg}
+      POSTGRES_PASSWORD: ${CATALOG_DB_PASSWORD:-iceberg}
+    volumes:
+      - iceberg-catalog-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d iceberg"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Bronze streaming job (Spark local mode). Spark UI: http://localhost:4040
+  spark:
+    build: ./streaming
+    image: transit-lakehouse/spark:latest
+    container_name: spark
+    command: ["python", "bronze_job.py"]
+    environment:
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-redpanda:9092}
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CATALOG_JDBC_URL: jdbc:postgresql://iceberg-catalog-db:5432/iceberg
+      CATALOG_DB_USER: ${CATALOG_DB_USER:-iceberg}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:-iceberg}
+      BRONZE_TRIGGER_SECONDS: ${BRONZE_TRIGGER_SECONDS:-10}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+    ports:
+      - "4040:4040"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      iceberg-catalog-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,json,sys; q=json.load(urllib.request.urlopen('http://localhost:4040/api/v1/applications', timeout=3)); sys.exit(0 if q else 1)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
 volumes:
   redpanda-data:
   minio-data:
   # >>> INSERTION POINT: append new volumes below this line <<<
   schedule-cache:   # phase 1
+  iceberg-catalog-data:   # phase 2
