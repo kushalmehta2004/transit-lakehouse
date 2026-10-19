@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: dim_routes
+    description: Route names and modes from the static GTFS schedule.
+    columns:
+      - name: route_id
+        data_tests: [not_null, unique]
+      - name: route_type
+        data_tests:
+          - accepted_values:
+              values: [0, 1, 2, 3, 4]
+              quote: false
+
+  - name: route_lateness_by_hour
+    description: >
+      Delay per route x service day x scheduled hour of day (America/New_York): avg / median /
+      p90 delay, share > 5 min late, share on time (-1..+5 min). Answers "which routes are late,
+      by how much, and at what times of day".
+    data_tests:
+      - unique_combination:
+          columns: [route_id, service_date, hour_of_day]
+    columns:
+      - name: route_id
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
+      - name: service_date
+        data_tests: [not_null]
+      - name: hour_of_day
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+              quote: false
+      - name: n_stop_visits
+        data_tests: [not_null]
+      - name: avg_delay_s
+        data_tests: [not_null, delay_in_plausible_range]
+      - name: p90_delay_s
+        data_tests: [delay_in_plausible_range]
+
+  - name: chronically_late_routes
+    description: Routes late across the rolling window (see thresholds in dbt_project.yml vars).
+    columns:
+      - name: route_id
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              to: ref('dim_routes')
+              field: route_id
+      - name: avg_delay_s
+        data_tests: [delay_in_plausible_range]

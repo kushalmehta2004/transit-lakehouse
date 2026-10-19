@@ -5,6 +5,7 @@ import pytest
 
 from trip_state import (
     EXPIRE_GRACE_S,
+    SERVICE_DAY_SPAN_S,
     TOMBSTONE_TTL_S,
     StopUpdate,
     TripTracker,
@@ -106,15 +107,34 @@ def test_canceled_trip_emits_nothing():
     assert tracker.release(10**15) == [] and tracker.canceled
 
 
+SERVICE_DAY_END = 1_792_368_000_000 + SERVICE_DAY_SPAN_S * 1000  # 2026-10-19 00:00 UTC + 36h
+
+
 def test_expiry_and_tombstone_lifecycle():
     tracker = TripTracker("20261019", "t1")
     tracker.apply(upd(0, [(9, 1_792_426_300)]), 0)
     expire_at = 1_792_426_300_000 + EXPIRE_GRACE_S * 1000
     assert tracker.next_deadline_ms() == expire_at
     assert tracker.release(expire_at)[0]["finalized_by"] == "expired"
-    assert not tracker.can_drop(expire_at)
-    assert tracker.next_deadline_ms() == T0 + TOMBSTONE_TTL_S * 1000
-    assert tracker.can_drop(T0 + TOMBSTONE_TTL_S * 1000)
+    assert not tracker.can_drop(T0 + TOMBSTONE_TTL_S * 1000)  # 1h idle is not enough any more
+    assert tracker.next_deadline_ms() == SERVICE_DAY_END
+    assert not tracker.can_drop(SERVICE_DAY_END - 1)
+    assert tracker.can_drop(SERVICE_DAY_END)
+
+
+def test_trip_reappearing_hours_later_does_not_re_emit_stops():
+    # Regression (trip 78854570): a SKIPPED stop announced hours ahead, no times -> expires after
+    # 10 min; the trip vanished and came back 2h later. It must not be emitted twice.
+    tracker = TripTracker("20261019", "78854570")
+    skipped = TripUpdate(T0, T0, "220", 0, None, "SCHEDULED", [StopUpdate(25, "36031", None, None, "SKIPPED")])
+    tracker.apply(skipped, 0)
+    first = tracker.release(T0 + EXPIRE_GRACE_S * 1000)
+    assert [r["stop_sequence"] for r in first] == [25]
+    two_hours_later = T0 + 120 * MIN
+    assert not tracker.can_drop(two_hours_later - WATERMARK_DELAY)
+    tracker.apply(TripUpdate(two_hours_later, two_hours_later, "220", 0, None, "SCHEDULED",
+                             [StopUpdate(25, "36031", None, None, "SKIPPED")]), two_hours_later - WATERMARK_DELAY)
+    assert tracker.release(10**15) == []
 
 
 def test_json_roundtrip_preserves_state():

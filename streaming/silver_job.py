@@ -94,6 +94,11 @@ TBLPROPERTIES (
     'format-version' = '2',
     'write.parquet.compression-codec' = 'zstd',
     'write.distribution-mode' = 'hash',
+    -- the stream appends every 30 s; snapshot isolation lets maintenance DELETE/MERGE commit
+    -- alongside those appends instead of failing on "conflicting files"
+    'delete.isolation-level' = 'snapshot',
+    'update.isolation-level' = 'snapshot',
+    'merge.isolation-level' = 'snapshot',
     'write.metadata.delete-after-commit.enabled' = 'true',
     'write.metadata.previous-versions-max' = '100'
 )

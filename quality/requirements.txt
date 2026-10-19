@@ -1,0 +1,2 @@
+great_expectations==0.18.21
+PyHive[hive_pure_sasl]==0.7.0

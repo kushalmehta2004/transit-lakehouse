@@ -1,1 +1,34 @@
-# TODO phase 4
+name: transit_lakehouse
+version: "1.0.0"
+config-version: 2
+profile: transit_lakehouse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: target
+clean-targets: [target, logs]
+
+vars:
+  # static GTFS reference written by ingestion/schedule_loader.py
+  reference_path: "s3a://{{ env_var('LAKEHOUSE_BUCKET', 'lakehouse') }}/reference/gtfs_static"
+  # incremental: re-aggregate this many trailing service days each run (silver rows for a
+  # service day keep arriving ~16 min after each stop, and after midnight for late trips)
+  reprocess_days: 1
+  # quality gate: a passed stop visit outside this range is a join/timezone bug, not lateness
+  # (real data: -16 min .. +43 min)
+  plausible_delay_min_s: -3600
+  plausible_delay_max_s: 10800
+  # chronically_late_routes
+  chronic_window_days: 7
+  chronic_min_visits: 200
+  chronic_avg_delay_s: 180        # avg >= 3 min late, or
+  chronic_share_late_5min: 0.25   # >= 25% of stop visits more than 5 min late
+
+models:
+  transit_lakehouse:
+    +file_format: iceberg
+    staging:
+      +materialized: ephemeral
+    gold:
+      +schema: gold

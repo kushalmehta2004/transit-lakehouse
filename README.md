@@ -27,6 +27,8 @@ docker compose ps         # redpanda + minio should show (healthy)
 | Poller metrics | http://localhost:8000/metrics | — |
 | Spark UI (bronze job) | http://localhost:4040 | — |
 | Spark UI (silver job) | http://localhost:4041 | — |
+| Spark Thrift (JDBC, for dbt/BI) | jdbc:hive2://localhost:10000 · UI http://localhost:4042 | — |
+| dbt docs (when served) | http://localhost:8085 | — |
 
 Stop with `docker compose down`, or wipe all data with `docker compose down -v`.
 
@@ -113,6 +115,45 @@ docker compose run --rm --no-deps spark python -m pytest -q tests     # 212 unit
 docker compose run --rm --no-deps spark python tests/replay_reorder.py # reorder + late-data replay (~8 min)
 ```
 
+## Gold + quality gates (phase 4)
+
+dbt connects to the lakehouse through a **Spark Thrift server** (`spark-thrift`, `jdbc:hive2://localhost:10000`). The server is started from the same `build_spark()` factory as the streaming jobs, so Spark is configured in exactly one place.
+
+```
+silver.stop_delays ─▶ stg_stop_delays (ephemeral: passed, schedule-matched, regular trips)
+                        ─▶ gold.route_lateness_by_hour   (incremental MERGE: route × service day × hour)
+                              ─▶ gold.chronically_late_routes (rolling 7 days, thresholds in dbt_project.yml)
+static GTFS routes ─▶ gold.dim_routes
+```
+
+| Model | Grain | What it answers |
+|---|---|---|
+| `route_lateness_by_hour` | route × service day × hour of day (local) | avg, median, and p90 delay; share > 5 min late; share on time (−1..+5 min) |
+| `chronically_late_routes` | route | routes with avg delay ≥ 3 min or ≥ 25% of visits > 5 min late over 7 days, ranked, with worst hour |
+| `dim_routes` | route | names and mode (bus, subway, …) |
+
+`route_lateness_by_hour` is incremental. Each run re-aggregates only the trailing service day and MERGEs it into Iceberg, so the full history is never rebuilt.
+
+*Caveat:* MBTA runs the subway by frequency rather than strict timetable, so "delay vs. schedule" is most meaningful for buses and commuter rail.
+
+### Quality gates: 39 checks that fail the pipeline
+
+- **dbt: 24 tests.** These are `not_null` on keys, `unique` / `unique_combination` (one row per stop visit), `relationships` from route_id to `dim_routes`, and `accepted_values` on `hour_of_day`, `route_type`, and `finalized_by`. There's also a custom generic test, **`delay_in_plausible_range`**: a passed stop's delay must be within −1 h..+3 h, since real data spans −16..+43 min.
+- **Great Expectations: 15 expectations.** The suite is `quality/expectations/silver_stop_delays.json`, run as a checkpoint over silver rows written in the last 6 h. It covers non-null keys, plausible delays, uniqueness, and timestamp monotonicity (`processed_time ≥ ingest_time`, `final_event_time ≥ first_event_time`, `passed_at > final_event_time`).
+- **Drill (`quality/bad_row_drill.py`).** It injects a row with a 10-hour delay. Both the dbt test and GE **fail**; after the row is removed, both **pass**.
+- **A real catch on the first run.** The uniqueness test found a **duplicate stop visit** in silver. MBTA had announced a skipped stop 4 hours ahead, the trip vanished from the feed, and it came back 2 hours later. By then the tracker's 1-hour tombstone had expired, so the stop was emitted twice. The fix in `trip_state.py` keeps tombstones until the end of the service day, and a regression test covers it.
+
+```bash
+docker compose run --rm dbt dbt build                                   # models + 24 tests
+docker compose run --rm dbt python /work/quality/run_checks.py          # GE checkpoint
+docker compose run --rm dbt python /work/quality/bad_row_drill.py       # prove the gates catch bad data
+docker compose run --rm dbt dbt docs generate
+docker compose run --rm -p 8085:8085 dbt dbt docs serve --host 0.0.0.0 --port 8085 --no-browser
+#   → http://localhost:8085 (lineage graph: silver → gold)
+```
+
+*dbt-spark + Iceberg note:* Iceberg v2 tables don't support `SHOW TABLE EXTENDED` (SPARK-33393). Because of that, dbt-spark's fallback produced an empty docs catalog. `dbt/macros/describe_table_extended_without_caching.sql` fixes the fallback's output format so the docs show every column.
+
 ## Build status
 
 | Phase | Status |
@@ -121,7 +162,7 @@ docker compose run --rm --no-deps spark python tests/replay_reorder.py # reorder
 | 1 — GTFS poller → Kafka | ✅ |
 | 2 — Bronze streaming | ✅ |
 | 3 — Silver join + delay | ✅ |
-| 4 — Gold models + quality | ⏳ |
+| 4 — Gold models + quality | ✅ |
 | 5 — Airflow + observability | ⏳ |
 | 6 — Load test + K8s | ⏳ |
 

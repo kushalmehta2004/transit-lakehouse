@@ -1,0 +1,31 @@
+version: 2
+
+sources:
+  - name: silver
+    description: Written by streaming/silver_job.py (Spark Structured Streaming).
+    tables:
+      - name: stop_delays
+        description: >
+          One row per observed stop visit. observed_time is the last prediction before the stop
+          dropped out of the realtime feed; delay_seconds = observed_time - scheduled_time.
+        columns:
+          - name: service_date
+            data_tests: [not_null]
+          - name: route_id
+            data_tests: [not_null]
+          - name: trip_id
+            data_tests: [not_null]
+          - name: stop_sequence
+            data_tests: [not_null]
+          - name: finalized_by
+            data_tests:
+              - accepted_values:
+                  values: ["passed", "expired"]
+          - name: delay_seconds
+            data_tests:
+              - delay_in_plausible_range:
+                  config:
+                    where: "finalized_by = 'passed'"
+        data_tests:
+          - unique_combination:
+              columns: [service_date, trip_id, stop_sequence]

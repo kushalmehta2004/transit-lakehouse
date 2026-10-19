@@ -16,8 +16,11 @@ watermark delay after the vehicle passes.
 
 Stops that are never proven passed (usually the last stop of a trip, or a vehicle that stops
 reporting) are released EXPIRE_GRACE_S after their predicted time, as finalized_by='expired'.
-After a trip has nothing pending, its state is kept as a tombstone for TOMBSTONE_TTL_S so a
-straggler can't re-open stops that were already emitted.
+After a trip has nothing pending, its state is kept as a tombstone, remembering which stops
+were already emitted, until its service day is over (start_date + SERVICE_DAY_SPAN_S, at
+least TOMBSTONE_TTL_S after the last update). Trips can vanish from the feed for hours and come
+back: MBTA announced a skipped stop for trip 78854570 four hours ahead, the trip disappeared,
+and it reappeared two hours later. A shorter tombstone re-emitted that stop.
 
 This module is pure Python/pandas so it can be unit-tested without Spark.
 """
@@ -25,11 +28,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import pandas as pd
 
 EXPIRE_GRACE_S = 600
 TOMBSTONE_TTL_S = 3600
+# A GTFS service day can run past midnight (times like 27:30:00). Measured from start_date
+# 00:00 UTC, 36 h covers that in any US timezone.
+SERVICE_DAY_SPAN_S = 36 * 3600
 
 
 @dataclass
@@ -163,13 +170,20 @@ class TripTracker:
             "finalized_by": "passed" if p["passed_at_ms"] is not None else "expired",
         }
 
+    def _tombstone_until_ms(self) -> int:
+        try:
+            day_start_ms = int(datetime.strptime(self.start_date, "%Y%m%d").replace(tzinfo=timezone.utc).timestamp()) * 1000
+        except (TypeError, ValueError):
+            day_start_ms = 0
+        return max(day_start_ms + SERVICE_DAY_SPAN_S * 1000, (self.last_event_ms or 0) + TOMBSTONE_TTL_S * 1000)
+
     def next_deadline_ms(self) -> int:
         if self.pending:
             return min(self._close_at_ms(p) for p in self.pending.values())
-        return (self.last_event_ms or 0) + TOMBSTONE_TTL_S * 1000
+        return self._tombstone_until_ms()
 
     def can_drop(self, watermark_ms: int) -> bool:
-        return not self.pending and watermark_ms >= (self.last_event_ms or 0) + TOMBSTONE_TTL_S * 1000
+        return not self.pending and watermark_ms >= self._tombstone_until_ms()
 
     # ------------------------------------------------------------ (de)serialization for GroupState
     def to_json(self) -> str:

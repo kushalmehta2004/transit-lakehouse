@@ -1,0 +1,66 @@
+{
+  "expectation_suite_name": "silver_stop_delays",
+  "meta": {
+    "great_expectations_version": "0.18.21",
+    "notes": "Validates recently written rows of silver.stop_delays (see quality/run_checks.py). Fails the pipeline on bad data."
+  },
+  "expectations": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {"min_value": 1},
+      "meta": {"why": "silver is receiving data at all"}
+    },
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "service_date"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "route_id"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "trip_id"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "stop_sequence"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "ingest_time"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "processed_time"}},
+    {"expectation_type": "expect_column_values_to_not_be_null", "kwargs": {"column": "final_event_time"}},
+    {
+      "expectation_type": "expect_column_values_to_be_in_set",
+      "kwargs": {"column": "finalized_by", "value_set": ["passed", "expired"]}
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "column": "observed_time",
+        "row_condition": "finalized_by==\"passed\" & time_kind.notnull()",
+        "condition_parser": "pandas"
+      },
+      "meta": {"why": "a passed stop with a prediction must have an observed time"}
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_between",
+      "kwargs": {
+        "column": "delay_seconds",
+        "min_value": -3600,
+        "max_value": 10800,
+        "row_condition": "finalized_by==\"passed\"",
+        "condition_parser": "pandas"
+      },
+      "meta": {"why": "real passed delays sit in -16..+43 min; beyond -1h..+3h is a join/timezone bug"}
+    },
+    {
+      "expectation_type": "expect_compound_columns_to_be_unique",
+      "kwargs": {"column_list": ["service_date", "trip_id", "stop_sequence"]},
+      "meta": {"why": "exactly-once: one row per stop visit"}
+    },
+    {
+      "expectation_type": "expect_column_pair_values_a_to_be_greater_than_b",
+      "kwargs": {"column_A": "processed_time", "column_B": "ingest_time", "or_equal": true},
+      "meta": {"why": "timestamp monotonicity: written to silver after it was ingested"}
+    },
+    {
+      "expectation_type": "expect_column_pair_values_a_to_be_greater_than_b",
+      "kwargs": {"column_A": "final_event_time", "column_B": "first_event_time", "or_equal": true},
+      "meta": {"why": "timestamp monotonicity: last prediction not before the first"}
+    },
+    {
+      "expectation_type": "expect_column_pair_values_a_to_be_greater_than_b",
+      "kwargs": {"column_A": "passed_at", "column_B": "final_event_time", "or_equal": false,
+                 "ignore_row_if": "either_value_is_missing"},
+      "meta": {"why": "timestamp monotonicity: a stop is proven passed only by a newer update"}
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+# Root-context builds (dbt/Dockerfile) only need dbt/ and quality/.
+*
+!dbt/
+!quality/
+dbt/target/
+dbt/logs/
+quality/results/
+**/__pycache__/
