@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.parquet
+data/
+spark-warehouse/
+checkpoints/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+logs/
+.idea/
+.vscode/
