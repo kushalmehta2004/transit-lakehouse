@@ -1,1 +1,5 @@
 pyspark==3.5.3
+# applyInPandasWithState (silver job) needs pandas + pyarrow; numpy<2 for pyspark 3.5
+pandas==2.2.3
+pyarrow==17.0.0
+numpy==1.26.4

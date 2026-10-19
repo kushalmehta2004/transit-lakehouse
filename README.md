@@ -26,6 +26,7 @@ docker compose ps         # redpanda + minio should show (healthy)
 | Kafka (from host) | localhost:19092 | — |
 | Poller metrics | http://localhost:8000/metrics | — |
 | Spark UI (bronze job) | http://localhost:4040 | — |
+| Spark UI (silver job) | http://localhost:4041 | — |
 
 Stop with `docker compose down`, or wipe all data with `docker compose down -v`.
 
@@ -74,6 +75,44 @@ Query the lakehouse with:
 docker compose exec spark python sql.py "SELECT count(*) FROM bronze.vehicle_positions"
 ```
 
+## Silver: stop delays (phase 3)
+
+`streaming/silver_job.py` turns `bronze.trip_updates` into **`silver.stop_delays`**, with one row per observed stop visit. The table is partitioned by `service_date` and `bucket(8, route_id)`.
+
+```
+bronze.trip_updates ─▶ watermark(event_time, 15 min) ─▶ dedup(trip, start_date, vehicle, event_time)
+  ─▶ explode stops ─▶ per-trip state machine (trip_state.py) ─▶ join active schedule (broadcast)
+  ─▶ delay_seconds ─▶ idempotent Iceberg append
+```
+
+**What "observed arrival" means.** MBTA publishes only *predicted* times, and it drops a stop from a trip's update once the vehicle has passed it. Silver therefore records the **last prediction made before the stop disappeared**. Validated against GPS: of 14,394 visits where the vehicle reported `STOPPED_AT` that stop, the median difference was 6 s and **99.6% were within 60 s**. Passed stops average about 94 predictions each.
+
+`delay_seconds = observed_time − scheduled_time`
+
+- **Scheduled time and times past midnight.** The scheduled time is the service-day start plus `arrival_secs`. The service-day start follows the GTFS definition, "noon minus 12 h" local time on the trip's `start_date`, which stays correct on DST days. So `25:10:00` on Oct 19 means 01:10 on Oct 20.
+- **Join key.** Silver joins on `(service_date, trip_id, stop_sequence)` rather than `stop_id`, because realtime data reports platforms (`Alewife-02`) where the schedule has stations (`70061`). This key matches 99.97% of scheduled stops. ADDED trips have no schedule, so their `delay_seconds` is null.
+- **Schedule size.** The broadcast schedule is only the trips running on the needed service days, filtered by `calendar` and `calendar_dates`: about 440k rows per day instead of 3.1M.
+
+### Late data: what happens to an event that arrives 20 minutes late?
+
+- **The watermark** is the maximum `event_time` seen so far minus 15 minutes, advanced after every micro-batch. An event 20 minutes behind the newest event is older than the watermark, so the first stateful operator **drops it from silver** and counts it in `numRowsDroppedByWatermark`, which appears in the silver logs and the Spark UI.
+- **It isn't lost.** Bronze has no watermark, so the raw event is still in `bronze.trip_updates` (and in Kafka for 48 h). It can be backfilled by re-running silver over that bronze range with a fresh checkpoint.
+- **It usually couldn't change anything anyway.** A late update is an old *prediction*. For each stop, silver keeps the newest prediction by event time, so an older one never wins. In addition, the stop has typically been released already, and updates for released stops are ignored.
+- **Events less than 15 minutes late are fully counted.** A passed stop is held until the watermark reaches the moment it was passed, so a late correction still lands. `tests/replay_reorder.py` checks this by replaying real bronze data with 2-minute chunks reversed inside 10-minute windows. The output is **identical row for row** to the in-order run, and 25 injected 20-minute-late events were all dropped.
+- **Why 15 minutes.** In real MBTA data, `event_time` lags `ingest_time` by p99 = 95 s and at most 12 min, so 15 minutes covers every real event observed. So far `dropped_late = 0` in production.
+- **The trade-off is latency.** A stop reaches silver about 16.5 min (p50) after the vehicle passes, because of the watermark. Bronze stays near real time at p50 ≈ 5 s.
+
+### Guarantees and state
+- **Exactly-once.** Each Iceberg append stores the query id and batch id in its snapshot summary, and a replayed batch is skipped. A `kill -9` produced 0 duplicate stop visits.
+- **State is bounded.** Spark keeps about 2.5k trips and about 150k dedup keys (the 15-minute window) in RocksDB, flat over hours. A trip's state is removed one hour after its last update.
+
+Run the tests with:
+
+```bash
+docker compose run --rm --no-deps spark python -m pytest -q tests     # 212 unit tests
+docker compose run --rm --no-deps spark python tests/replay_reorder.py # reorder + late-data replay (~8 min)
+```
+
 ## Build status
 
 | Phase | Status |
@@ -81,7 +120,7 @@ docker compose exec spark python sql.py "SELECT count(*) FROM bronze.vehicle_pos
 | 0 — Infra skeleton | ✅ |
 | 1 — GTFS poller → Kafka | ✅ |
 | 2 — Bronze streaming | ✅ |
-| 3 — Silver join + delay | ⏳ |
+| 3 — Silver join + delay | ✅ |
 | 4 — Gold models + quality | ⏳ |
 | 5 — Airflow + observability | ⏳ |
 | 6 — Load test + K8s | ⏳ |

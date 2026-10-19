@@ -9,8 +9,8 @@ ENV JAVA_HOME=/usr/lib/jvm/default-java \
     SPARK_IVY_DIR=/opt/ivy
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 
 # Resolve the pinned Maven packages at build time so containers start without downloading jars.
 COPY spark_session.py .

@@ -191,6 +191,37 @@ services:
       start_period: 60s
     restart: unless-stopped
 
+  # ---------------------------------------------------------------- phase 3
+  # Silver streaming job: bronze.trip_updates -> silver.stop_delays. Spark UI: http://localhost:4041
+  spark-silver:
+    image: transit-lakehouse/spark:latest
+    container_name: spark-silver
+    command: ["python", "silver_job.py"]
+    environment:
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      CATALOG_JDBC_URL: jdbc:postgresql://iceberg-catalog-db:5432/iceberg
+      CATALOG_DB_USER: ${CATALOG_DB_USER:-iceberg}
+      CATALOG_DB_PASSWORD: ${CATALOG_DB_PASSWORD:-iceberg}
+      SILVER_TRIGGER_SECONDS: ${SILVER_TRIGGER_SECONDS:-30}
+      SILVER_WATERMARK: ${SILVER_WATERMARK:-15 minutes}
+      SCHEDULE_TIMEZONE: ${SCHEDULE_TIMEZONE:-America/New_York}
+      SPARK_DRIVER_MEMORY: ${SPARK_SILVER_DRIVER_MEMORY:-2g}
+    ports:
+      - "4041:4040"
+    depends_on:
+      spark:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,json,sys; q=json.load(urllib.request.urlopen('http://localhost:4040/api/v1/applications', timeout=3)); sys.exit(0 if q else 1)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
 volumes:
   redpanda-data:
   minio-data:
