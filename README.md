@@ -7,6 +7,8 @@ GTFS-realtime feed → poller → Redpanda → Spark Structured Streaming
   → bronze Iceberg → silver Iceberg (delay_seconds) → dbt gold → Airflow + Grafana
 ```
 
+**See it working:** the [feature demo](docs/demo/README.md) has real screenshots of every component (Kafka, Spark, Iceberg, dbt, Airflow, Grafana, the failure drills, and Kubernetes).
+
 The full spec and phase plan are in `PRD + Phase Build Plan — Streaming Data Pipeline.md`.
 
 ## Run locally
