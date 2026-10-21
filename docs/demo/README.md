@@ -2,6 +2,8 @@
 
 Every screenshot here comes from the running system, captured Oct 21, 2026 with [`capture.py`](capture.py). For a visual walkthrough, open [`index.html`](index.html) in a browser.
 
+**Demo video (61 s, with narration):** [transit-lakehouse-demo.mp4](transit-lakehouse-demo.mp4). It's built from real recordings of the running system with Playwright, an edge-tts voiceover, and Remotion; see [`demo/video/`](../../demo/video/).
+
 **The question:** which MBTA routes are chronically late, by how much, and at what time of day?
 
 ```

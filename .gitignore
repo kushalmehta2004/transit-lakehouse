@@ -15,3 +15,9 @@ logs/
 .vscode/
 quality/results/
 dbt/.user.yml
+
+# demo video build artifacts
+demo/video/node_modules/
+demo/video/recorder/node_modules/
+demo/video/recorder/frames/
+demo/video/out/

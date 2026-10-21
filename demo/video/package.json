@@ -1,0 +1,25 @@
+{
+  "name": "transit-lakehouse-demo-video",
+  "private": true,
+  "version": "1.0.0",
+  "description": "60-second demo video of the Transit Lakehouse streaming pipeline (Remotion)",
+  "scripts": {
+    "manifest": "node scripts/clips-manifest.mjs",
+    "voice": "python tts/make_voice.py",
+    "studio": "npm run manifest && remotion studio",
+    "still": "npm run manifest && remotion still TransitDemo",
+    "render": "npm run manifest && remotion render TransitDemo out/transit-lakehouse-demo.mp4 --codec=h264 --crf=18 --concurrency=2",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.364",
+    "@remotion/google-fonts": "4.0.364",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "remotion": "4.0.364"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.8",
+    "typescript": "5.8.3"
+  }
+}
