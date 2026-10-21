@@ -1,0 +1,44 @@
+# Same settings as .env.example / docker-compose.yml. Service names match compose
+# (redpanda, minio, iceberg-catalog-db, spark-thrift), so no code or config changes are needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: transit-lakehouse
+data:
+  KAFKA_BOOTSTRAP: "redpanda:9092"
+  LAKEHOUSE_BUCKET: "lakehouse"
+  S3_ENDPOINT: "http://minio:9000"
+  CATALOG_JDBC_URL: "jdbc:postgresql://iceberg-catalog-db:5432/iceberg"
+  # ingestion
+  GTFS_RT_VEHICLE_POSITIONS_URL: "https://cdn.mbta.com/realtime/VehiclePositions.pb"
+  GTFS_RT_TRIP_UPDATES_URL: "https://cdn.mbta.com/realtime/TripUpdates.pb"
+  GTFS_STATIC_URL: "https://cdn.mbta.com/MBTA_GTFS.zip"
+  POLL_INTERVAL_SECONDS: "15"
+  KAFKA_RAW_PARTITIONS: "6"
+  SCHEDULE_REFRESH_HOURS: "24"
+  SCHEDULE_CACHE_DIR: "/data/schedule"
+  METRICS_PORT: "8000"
+  # streaming
+  BRONZE_TRIGGER_SECONDS: "10"
+  SILVER_TRIGGER_SECONDS: "30"
+  SILVER_WATERMARK: "15 minutes"
+  SCHEDULE_TIMEZONE: "America/New_York"
+---
+# Local-only default credentials (same as .env.example). For anything real, create this
+# Secret out of band (kubectl create secret generic ... / sealed-secrets) instead of committing it.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lakehouse-creds
+  namespace: transit-lakehouse
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: "minioadmin"
+  MINIO_ROOT_PASSWORD: "minioadmin"
+  AWS_ACCESS_KEY_ID: "minioadmin"
+  AWS_SECRET_ACCESS_KEY: "minioadmin"
+  CATALOG_DB_USER: "iceberg"
+  CATALOG_DB_PASSWORD: "iceberg"
+  POSTGRES_USER: "iceberg"
+  POSTGRES_PASSWORD: "iceberg"

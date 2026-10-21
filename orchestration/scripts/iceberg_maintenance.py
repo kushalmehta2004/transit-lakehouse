@@ -22,7 +22,9 @@ def compact(table: str) -> None:
     result = lakehouse_sql.run(
         f"CALL {CATALOG}.system.rewrite_data_files(table => '{table}', "
         "options => map('min-input-files', '5', 'target-file-size-bytes', '134217728', "
-        "'partial-progress.enabled', 'true'))",
+        "'partial-progress.enabled', 'true', "
+        # default is 5 file groups in parallel; one keeps the Thrift server's heap bounded
+        "'max-concurrent-file-group-rewrites', '1'))",
         fetch=True,
     )
     print(f"{table}: {before} data files -> {files(table)}; {result}")

@@ -1,0 +1,79 @@
+# Bronze streaming job: Kafka raw topics -> Iceberg bronze tables.
+# replicas: 1 + Recreate, never scaled: a Structured Streaming checkpoint is single-writer;
+# two replicas on the same checkpoint would race on offsets/commits and corrupt it.
+# Service name `spark` matches compose (and observability/prometheus.yml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: spark-bronze}
+spec:
+  type: NodePort
+  selector: {app.kubernetes.io/name: spark-bronze}
+  ports:
+    - {name: ui, port: 4040, targetPort: 4040, nodePort: 30404}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-bronze
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: spark-bronze, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: spark-bronze}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: spark-bronze, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: transit-lakehouse/spark:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              for host, port in [("redpanda", 9092), ("minio", 9000), ("iceberg-catalog-db", 5432)]:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 3).close(); print("ok", host); break
+                      except OSError:
+                          print("waiting for", host); time.sleep(3)
+      containers:
+        - name: bronze
+          image: transit-lakehouse/spark:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "bronze_job.py"]
+          envFrom:
+            - configMapRef: {name: pipeline-config}
+          env:
+            - {name: SPARK_DRIVER_MEMORY, value: "1g"}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_SECRET_ACCESS_KEY}}
+            - name: CATALOG_DB_USER
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: CATALOG_DB_USER}}
+            - name: CATALOG_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: CATALOG_DB_PASSWORD}}
+          ports:
+            - {name: ui, containerPort: 4040}
+          # The Spark UI (and its REST API) comes up with the SparkSession.
+          readinessProbe:
+            httpGet: {path: /api/v1/applications, port: 4040}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /api/v1/applications, port: 4040}
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 500m, memory: 1280Mi}   # measured ~1.7Gi with a 2g heap; heap is 1g here
+            limits: {memory: 2Gi}

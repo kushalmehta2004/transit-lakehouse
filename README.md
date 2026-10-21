@@ -250,8 +250,45 @@ Phase 5 added only about 1.3 GB for Airflow, Prometheus, Grafana, and both expor
 | 3 — Silver join + delay | ✅ |
 | 4 — Gold models + quality | ✅ |
 | 5 — Airflow + observability | ✅ |
-| 6 — Load test + K8s | ⏳ |
+| 6 — Load test + K8s | ✅ |
 
 ## Measured numbers
 
-_Filled in Phase 6._
+These were measured on one Windows laptop (12 cores, 15.5 GB for Docker), with the whole stack running and live MBTA data. Full method and raw data: [`scripts/results/phase6_perf.md`](scripts/results/phase6_perf.md).
+
+| Metric | Result |
+|---|---|
+| Live feed volume | ~150 events/s (≈540 vehicles + 1,340 trips, every 15 s) |
+| **Sustained throughput** (ingest → bronze) | **10,000 events/s** with flat Kafka lag. It breaks at 15k |
+| Throughput fix | 2k → 10k events/s (**~4×**). The bronze write was coalesced to 1 task, so the job ran single-threaded; `BRONZE_WRITE_PARTITIONS=6` restored per-partition parallelism |
+| **End-to-end latency, ingest → bronze** | **p50 5.0 s · p99 9.9 s** (the same at 10k events/s) |
+| End-to-end latency, ingest → silver | p50 16.5 min · p99 18.6 min. This is **by design**: the 15-min watermark makes late events count |
+| **Partitioning speedup** (one route, 7 days, 30-day table) | **1.9× faster (−47%)**: 0.67 s → 0.35 s, data read 51 MB → 4 MB |
+| Partitioning, all routes, 7 days | 1.44× faster (−30%). A full-history single-route query is 11% *slower*, the over-partitioning trade-off |
+| **Consumer recovery** after 5 min down | bronze caught up in **32 s** (40k-message backlog); silver in **101 s** |
+| Backlog drain | 1.6M messages in ~80 s |
+| Quality gates | **39** (24 dbt tests + 15 Great Expectations). They caught a real duplicate-stop bug and a stale-aggregate bug in gold |
+| Correctness vs. GPS | 99.6% of observed arrivals within 60 s of the vehicle's `STOPPED_AT` GPS report |
+| Memory footprint | ~11.3 GB for the full stack |
+
+### Kubernetes (deployed once to `kind`; see [`k8s/`](k8s/README.md))
+
+The core pipeline was deployed to a single-node kind cluster: Redpanda, MinIO, Postgres, the poller, and the bronze, silver and Thrift Spark jobs. **Every pod was Running and Ready with 0 restarts on the first apply**, and data flowed end to end: 104k trip updates went into bronze and 2.6k stop visits into silver, with 0 duplicates and a median delay of +133 s, the same as in compose. Evidence: [`k8s/results/deploy-final.txt`](k8s/results/deploy-final.txt).
+
+- **Readiness and liveness probes on every service.** The Spark jobs use `Recreate` rollouts so two writers never share a checkpoint.
+- **One HPA, on the stateless Thrift SQL server** (CPU 70%, 1→2 replicas). It scaled to 2 under a real analytical query. The poller and the Spark streaming jobs deliberately have no HPA: two pollers would duplicate events, and two writers would corrupt a single-writer checkpoint.
+- **Break-it drill** ([`k8s/results/breakit.md`](k8s/results/breakit.md)):
+  - **Bad readiness port:** the pod stayed `0/1`, its Service had no endpoints, and the app kept running unseen. `rollout undo` fixed it in 13 s.
+  - **Bad liveness path:** this caused *nothing*, because the metrics server answers 200 on every path. That's a lesson in what a probe actually checks.
+  - **Bad liveness port:** this produced **CrashLoopBackOff** after 6 restarts, and `rollout undo` fixed it.
+- **What broke during deploy:** `kind load` fails on multi-platform public images with Docker Desktop's containerd store. The fix was to load only the locally built images and let the node pull the rest. Silver also peaked at 4.17 Gi against a 4.5 Gi limit, so its limit was raised to 5 Gi.
+
+## Resume bullets
+
+- Built an end-to-end streaming lakehouse (Kafka → Spark Structured Streaming → Iceberg → dbt → Airflow) on live MBTA transit data. It sustains **10,000 events/sec** at **p99 9.9 s** ingest-to-lakehouse latency, with a 4× throughput gain after finding a single-threaded write bottleneck in a load test.
+- Implemented a stateful stream-static join with a 15-minute event-time watermark and an idempotent MERGE sink. The output was identical row-for-row under reordered replay, and 99.6% of computed arrivals matched GPS within 60 s.
+- Cut lateness-query latency **47%** with Iceberg partitioning and incremental dbt models, and measured where over-partitioning backfires.
+- Added **39** dbt and Great Expectations quality gates that fail the Airflow pipeline on bad data. They caught two real correctness bugs before they reached analytics.
+- Instrumented with Prometheus and Grafana (consumer lag, freshness, DLQ, DAG health, with 6 alerts), and deployed on Kubernetes with readiness probes and an HPA. Recovery from a 5-minute consumer outage takes 32 s.
+
+Blog post: [docs/blog-post.md](docs/blog-post.md)

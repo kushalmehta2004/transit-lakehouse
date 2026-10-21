@@ -1,0 +1,60 @@
+{
+  "job": "silver",
+  "service": "spark-silver",
+  "down_seconds": 300,
+  "baseline_max": 316.0,
+  "metric_at_restart": 272.0,
+  "peak": 362.0,
+  "restart_to_first_batch_s": 18.8,
+  "restart_to_caught_up_s": 103,
+  "outage_total_s": 408,
+  "trace": [
+    {
+      "t": 12,
+      "metric": 302.0
+    },
+    {
+      "t": 22,
+      "metric": 302.0
+    },
+    {
+      "t": 32,
+      "metric": 302.0
+    },
+    {
+      "t": 43,
+      "metric": 332.0
+    },
+    {
+      "t": 53,
+      "metric": 332.0
+    },
+    {
+      "t": 63,
+      "metric": 332.0
+    },
+    {
+      "t": 73,
+      "metric": 362.0
+    },
+    {
+      "t": 83,
+      "metric": 362.0
+    },
+    {
+      "t": 93,
+      "metric": 362.0
+    },
+    {
+      "t": 103,
+      "metric": 14.0
+    }
+  ],
+  "note": "The script's automatic 'caught up' threshold used a baseline inflated by the preceding bronze outage (silver had no input then). Corrected values derived from Prometheus: silver batch gap 339 s, first batch 18.8 s after restart, freshness < 60 s and watermark delay back to normal (~990 s) at +101 s, peak freshness 362 s.",
+  "corrected": {
+    "restart_to_first_batch_s": 18.8,
+    "restart_to_caught_up_s": 101,
+    "peak_freshness_s": 362,
+    "batch_gap_s": 339
+  }
+}

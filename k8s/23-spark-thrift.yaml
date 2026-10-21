@@ -1,0 +1,77 @@
+# Spark Thrift (JDBC) server over the lakehouse catalog, for dbt / BI.
+# The one stateless Spark workload: each replica is an independent read/query engine on the same
+# Iceberg catalog, so it is the one that can scale horizontally (see 30-hpa-spark-thrift.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-thrift
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: spark-thrift}
+spec:
+  selector: {app.kubernetes.io/name: spark-thrift}
+  ports:
+    - {name: jdbc, port: 10000, targetPort: 10000}
+    - {name: ui, port: 4040, targetPort: 4040}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-thrift
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: spark-thrift, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: spark-thrift}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: spark-thrift, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: transit-lakehouse/spark:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              for host, port in [("minio", 9000), ("iceberg-catalog-db", 5432)]:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 3).close(); print("ok", host); break
+                      except OSError:
+                          print("waiting for", host); time.sleep(3)
+      containers:
+        - name: thrift
+          image: transit-lakehouse/spark:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "thrift_server.py"]
+          envFrom:
+            - configMapRef: {name: pipeline-config}
+          env:
+            - {name: SPARK_DRIVER_MEMORY, value: "1536m"}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_SECRET_ACCESS_KEY}}
+            - name: CATALOG_DB_USER
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: CATALOG_DB_USER}}
+            - name: CATALOG_DB_PASSWORD
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: CATALOG_DB_PASSWORD}}
+          ports:
+            - {name: jdbc, containerPort: 10000}
+            - {name: ui, containerPort: 4040}
+          startupProbe:          # JVM + jar load + catalog init can take ~1 min
+            tcpSocket: {port: 10000}
+            periodSeconds: 10
+            failureThreshold: 30
+          readinessProbe:
+            tcpSocket: {port: 10000}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: 10000}
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests: {cpu: 500m, memory: 1536Mi}   # measured ~2.7Gi total with a 1.5g heap
+            limits: {memory: 3Gi}

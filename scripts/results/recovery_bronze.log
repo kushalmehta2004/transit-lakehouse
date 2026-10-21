@@ -1,0 +1,7 @@
+baseline (max over last 3 min): 2014
+stopped spark; down for 300s
+started spark; metric at restart = 38284.0
+  +  12s metric=38284.0 first_batch=None
+  +  22s metric=40280.0 first_batch=None
+{"job": "bronze", "service": "spark", "down_seconds": 300, "baseline_max": 2014.0, "metric_at_restart": 38284.0, "peak": 40280.0, "restart_to_first_batch_s": 14.6, "restart_to_caught_up_s": 32, "outage_total_s": 337}
+bronze exit 0

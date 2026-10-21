@@ -1,0 +1,66 @@
+## 02:20:20 UTC: patch liveness probe port 8000 -> 8001
+deployment.apps/poller patched
+02:20:35  poller-8594bdcccd-qh4t7   1/1   Running   0     15s
+02:20:51  poller-8594bdcccd-qh4t7   1/1   Running   0     31s
+02:21:06  poller-8594bdcccd-qh4t7   1/1   Running   0     46s
+02:21:22  poller-8594bdcccd-qh4t7   1/1   Running   0     61s
+02:21:37  poller-8594bdcccd-qh4t7   1/1   Running   0     77s
+02:21:52  poller-8594bdcccd-qh4t7   1/1   Running   1 (11s ago)   92s
+02:22:08  poller-8594bdcccd-qh4t7   1/1   Running   1 (27s ago)   108s
+02:22:23  poller-8594bdcccd-qh4t7   1/1   Running   1 (42s ago)   2m3s
+02:22:39  poller-8594bdcccd-qh4t7   1/1   Running   1 (58s ago)   2m19s
+02:22:54  poller-8594bdcccd-qh4t7   1/1   Running   1 (73s ago)   2m34s
+02:23:09  poller-8594bdcccd-qh4t7   0/1   Running   2 (8s ago)   2m49s
+02:23:25  poller-8594bdcccd-qh4t7   1/1   Running   2 (24s ago)   3m5s
+02:23:40  poller-8594bdcccd-qh4t7   1/1   Running   2 (39s ago)   3m20s
+02:23:56  poller-8594bdcccd-qh4t7   1/1   Running   2 (55s ago)   3m36s
+02:24:11  poller-8594bdcccd-qh4t7   1/1   Running   2 (70s ago)   3m51s
+02:24:26  poller-8594bdcccd-qh4t7   0/1   Running   3 (5s ago)   4m6s
+02:24:42  poller-8594bdcccd-qh4t7   1/1   Running   3 (21s ago)   4m22s
+02:24:57  poller-8594bdcccd-qh4t7   1/1   Running   3 (36s ago)   4m37s
+02:25:13  poller-8594bdcccd-qh4t7   1/1   Running   3 (52s ago)   4m53s
+02:25:28  poller-8594bdcccd-qh4t7   1/1   Running   3 (67s ago)   5m8s
+02:25:43  poller-8594bdcccd-qh4t7   0/1   Running   4 (2s ago)   5m23s
+02:25:59  poller-8594bdcccd-qh4t7   1/1   Running   4 (18s ago)   5m39s
+02:26:14  poller-8594bdcccd-qh4t7   1/1   Running   4 (33s ago)   5m54s
+02:26:30  poller-8594bdcccd-qh4t7   1/1   Running   4 (49s ago)   6m10s
+02:26:45  poller-8594bdcccd-qh4t7   1/1   Running   4 (64s ago)   6m25s
+02:27:01  poller-8594bdcccd-qh4t7   1/1   Running   4 (79s ago)   6m40s
+02:27:16  poller-8594bdcccd-qh4t7   1/1   Running   5 (15s ago)   6m56s
+02:27:31  poller-8594bdcccd-qh4t7   1/1   Running   5 (30s ago)   7m11s
+02:27:47  poller-8594bdcccd-qh4t7   1/1   Running   5 (46s ago)   7m27s
+02:28:02  poller-8594bdcccd-qh4t7   1/1   Running   5 (61s ago)   7m42s
+02:28:18  poller-8594bdcccd-qh4t7   1/1   Running   5 (77s ago)   7m58s
+02:28:33  poller-8594bdcccd-qh4t7   1/1   Running   6 (12s ago)   8m13s
+02:28:48  poller-8594bdcccd-qh4t7   1/1   Running   6 (27s ago)   8m28s
+02:29:04  poller-8594bdcccd-qh4t7   1/1   Running   6 (43s ago)   8m44s
+02:29:19  poller-8594bdcccd-qh4t7   1/1   Running   6 (58s ago)   8m59s
+02:29:35  poller-8594bdcccd-qh4t7   1/1   Running   6 (74s ago)   9m15s
+02:29:50  poller-8594bdcccd-qh4t7   0/1   CrashLoopBackOff   6 (9s ago)   9m30s
+## 02:29:51 kubectl describe pod poller-8594bdcccd-qh4t7
+    State:          Waiting
+      Reason:       CrashLoopBackOff
+    Last State:     Terminated
+      Reason:       Completed
+      Exit Code:    0
+    Restart Count:  6
+  Normal   Killing    2m50s (x5 over 8m10s)  kubelet            spec.containers{poller}: Container poller failed liveness probe, will be restarted
+  Warning  Unhealthy  10s (x21 over 8m50s)   kubelet            spec.containers{poller}: Liveness probe failed: Get "http://10.244.0.23:8001/metrics": dial tcp 10.244.0.23:8001: connect: connection refused
+  Warning  Unhealthy  10s                    kubelet            spec.containers{poller}: Readiness probe failed: Get "http://10.244.0.23:8000/metrics": dial tcp 10.244.0.23:8000: connect: connection refused
+  Warning  BackOff    9s (x2 over 10s)       kubelet            spec.containers{poller}: Back-off restarting failed container poller in pod poller-8594bdcccd-qh4t7_transit-lakehouse(b13fc325-b51e-40b1-bd13-1a5a8f326313)
+## 02:29:51 kubectl logs --previous (app healthy until SIGTERM from kubelet)
+2026-10-21 02:29:37,540 INFO poll-vehicle_positions: vehicle_positions: 366 entities -> 303 produced, 63 unchanged, 0 invalid
+2026-10-21 02:29:37,764 INFO poll-trip_updates: trip_updates: 1014 entities -> 913 produced, 101 unchanged, 0 invalid
+2026-10-21 02:29:41,097 INFO MainThread: shutting down
+## 02:29:51 FIX: kubectl rollout undo deployment/poller
+Warning: resource deployments/poller was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+deployment.apps/poller rolled back
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 of 1 updated replicas are available...
+deployment "poller" successfully rolled out
+## 02:31:35 after fix (90 s later)
+NAME                      READY   STATUS    RESTARTS   AGE
+poller-769d67b4dc-wb2gl   1/1     Running   0          103s
+liveness=8000 readiness=8000

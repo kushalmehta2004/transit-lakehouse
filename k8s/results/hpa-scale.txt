@@ -1,0 +1,14 @@
+## 02:32:03 UTC: started 3 concurrent CPU-heavy query loops on spark-thrift (request 500m, target 70%)
+02:32:18  cpu: 1%/70% 1 replicas=2  pods: spark-thrift-6f5fbf68f6-kpvnv:1/1:Running spark-thrift-6f5fbf68f6-n9tzc:1/1:Running 
+02:32:34  cpu: 574%/70% 1 replicas=2  pods: spark-thrift-6f5fbf68f6-kpvnv:1/1:Running spark-thrift-6f5fbf68f6-n9tzc:1/1:Running 
+02:32:50  cpu: 917%/70% 1 replicas=2  pods: spark-thrift-6f5fbf68f6-kpvnv:1/1:Running spark-thrift-6f5fbf68f6-n9tzc:1/1:Running 
+02:33:06  cpu: 677%/70% 1 replicas=2  pods: spark-thrift-6f5fbf68f6-kpvnv:1/1:Running spark-thrift-6f5fbf68f6-n9tzc:1/1:Running 
+## events
+Events:
+  Type     Reason                        Age                From                       Message
+  ----     ------                        ----               ----                       -------
+  Warning  FailedGetResourceMetric       25m (x2 over 25m)  horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedComputeMetricsReplicas  25m (x2 over 25m)  horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedGetResourceMetric       24m (x3 over 25m)  horizontal-pod-autoscaler  failed to get cpu utilization: did not receive metrics for targeted pods (pods might be unready)
+  Warning  FailedComputeMetricsReplicas  24m (x3 over 25m)  horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: did not receive metrics for targeted pods (pods might be unready)
+  Normal   SuccessfulRescale             2m26s              horizontal-pod-autoscaler  New size: 2; reason: cpu resource utilization (percentage of request) above target

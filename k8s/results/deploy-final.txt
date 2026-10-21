@@ -1,0 +1,44 @@
+# captured 2026-10-21 02:33:44 UTC (after break-it drills + HPA scale-up)
+$ kubectl get pods,svc,hpa -n transit-lakehouse -o wide
+NAME                                READY   STATUS      RESTARTS   AGE     IP            NODE                              NOMINATED NODE   READINESS GATES
+pod/iceberg-catalog-db-0            1/1     Running     0          27m     10.244.0.12   transit-lakehouse-control-plane   <none>           <none>
+pod/minio-54d7c4b66b-7qsgq          1/1     Running     0          27m     10.244.0.11   transit-lakehouse-control-plane   <none>           <none>
+pod/minio-init-cfj45                0/1     Completed   0          26m     10.244.0.13   transit-lakehouse-control-plane   <none>           <none>
+pod/poller-769d67b4dc-wb2gl         1/1     Running     0          3m53s   10.244.0.24   transit-lakehouse-control-plane   <none>           <none>
+pod/redpanda-0                      1/1     Running     0          27m     10.244.0.10   transit-lakehouse-control-plane   <none>           <none>
+pod/spark-bronze-6bb6cc7d8b-gh9kg   1/1     Running     0          26m     10.244.0.15   transit-lakehouse-control-plane   <none>           <none>
+pod/spark-silver-6fd68f775-d4ltd    1/1     Running     0          26m     10.244.0.16   transit-lakehouse-control-plane   <none>           <none>
+pod/spark-thrift-6f5fbf68f6-kpvnv   1/1     Running     0          26m     10.244.0.17   transit-lakehouse-control-plane   <none>           <none>
+pod/spark-thrift-6f5fbf68f6-n9tzc   1/1     Running     0          3m4s    10.244.0.25   transit-lakehouse-control-plane   <none>           <none>
+
+NAME                         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)              AGE   SELECTOR
+service/iceberg-catalog-db   ClusterIP   10.96.88.139    <none>        5432/TCP             27m   app.kubernetes.io/name=iceberg-catalog-db
+service/minio                ClusterIP   10.96.124.221   <none>        9000/TCP,9001/TCP    27m   app.kubernetes.io/name=minio
+service/poller               NodePort    10.96.202.227   <none>        8000:30800/TCP       26m   app.kubernetes.io/name=poller
+service/redpanda             ClusterIP   10.96.36.161    <none>        9092/TCP,9644/TCP    27m   app.kubernetes.io/name=redpanda
+service/redpanda-hl          ClusterIP   None            <none>        33145/TCP            27m   app.kubernetes.io/name=redpanda
+service/spark                NodePort    10.96.210.137   <none>        4040:30404/TCP       26m   app.kubernetes.io/name=spark-bronze
+service/spark-silver         ClusterIP   10.96.147.22    <none>        4040/TCP             26m   app.kubernetes.io/name=spark-silver
+service/spark-thrift         ClusterIP   10.96.103.220   <none>        10000/TCP,4040/TCP   26m   app.kubernetes.io/name=spark-thrift
+
+NAME                                               REFERENCE                 TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/spark-thrift   Deployment/spark-thrift   cpu: 1%/70%   1         2         2          26m
+
+$ kubectl top pods -n transit-lakehouse
+NAME                            CPU(cores)   MEMORY(bytes)   
+iceberg-catalog-db-0            8m           60Mi            
+minio-54d7c4b66b-7qsgq          139m         425Mi           
+poller-769d67b4dc-wb2gl         30m          53Mi            
+redpanda-0                      25m          287Mi           
+spark-bronze-6bb6cc7d8b-gh9kg   287m         1476Mi          
+spark-silver-6fd68f775-d4ltd    1222m        4171Mi          
+spark-thrift-6f5fbf68f6-kpvnv   9m           1521Mi          
+spark-thrift-6f5fbf68f6-n9tzc   7m           657Mi           
+
+$ kubectl top nodes
+NAME                              CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)   
+transit-lakehouse-control-plane   1984m        16%      10513Mi         70%         
+
+$ data flow check (beeline on spark-thrift)
+bronze_vp	bronze_tu	silver_rows	silver_dups	silver_latest_write	now
+33515	104216	2596	0	2026-10-21 02:33:36.086881	2026-10-21 02:33:47.018899

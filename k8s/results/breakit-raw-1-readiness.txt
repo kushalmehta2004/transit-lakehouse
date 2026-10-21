@@ -1,0 +1,51 @@
+## 02:09:36 UTC: patch readiness probe port 8000 -> 8001
+deployment.apps/poller patched
+## 02:10:36 kubectl get pods -l app.kubernetes.io/name=poller
+NAME                     READY   STATUS    RESTARTS   AGE
+poller-c77df6658-z44fb   0/1     Running   0          59s
+## 02:10:36 kubectl get endpoints poller
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME     ENDPOINTS   AGE
+poller               3m29s
+## 02:10:37 kubectl describe pod (events)
+Events:
+  Type     Reason     Age               From               Message
+  ----     ------     ----              ----               -------
+  Normal   Scheduled  60s               default-scheduler  Successfully assigned transit-lakehouse/poller-c77df6658-z44fb to transit-lakehouse-control-plane
+  Normal   Pulled     60s               kubelet            spec.initContainers{wait-for-deps}: Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+  Normal   Created    60s               kubelet            spec.initContainers{wait-for-deps}: Container created
+  Normal   Started    59s               kubelet            spec.initContainers{wait-for-deps}: Container started
+  Normal   Pulled     59s               kubelet            spec.containers{poller}: Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+  Normal   Created    58s               kubelet            spec.containers{poller}: Container created
+  Normal   Started    58s               kubelet            spec.containers{poller}: Container started
+  Warning  Unhealthy  8s (x5 over 48s)  kubelet            spec.containers{poller}: Readiness probe failed: Get "http://10.244.0.18:8001/metrics": dial tcp 10.244.0.18:8001: connect: connection refused
+## 02:10:37 kubectl get events (poller)
+60s         Normal    Pulled      pod/poller-c77df6658-z44fb          Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+60s         Normal    Scheduled   pod/poller-c77df6658-z44fb          Successfully assigned transit-lakehouse/poller-c77df6658-z44fb to transit-lakehouse-control-plane
+60s         Normal    Created     pod/poller-c77df6658-z44fb          Container created
+59s         Normal    Pulled      pod/poller-c77df6658-z44fb          Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+59s         Normal    Started     pod/poller-c77df6658-z44fb          Container started
+58s         Normal    Created     pod/poller-c77df6658-z44fb          Container created
+58s         Normal    Started     pod/poller-c77df6658-z44fb          Container started
+8s          Warning   Unhealthy   pod/poller-c77df6658-z44fb          Readiness probe failed: Get "http://10.244.0.18:8001/metrics": dial tcp 10.244.0.18:8001: connect: connection refused
+## 02:10:37 kubectl logs deploy/poller --tail=3 (app itself is fine)
+2026-10-21 02:10:13,566 INFO poll-vehicle_positions: vehicle_positions: 376 entities -> 320 produced, 56 unchanged, 0 invalid
+2026-10-21 02:10:28,457 INFO poll-vehicle_positions: vehicle_positions: 376 entities -> 271 produced, 105 unchanged, 0 invalid
+2026-10-21 02:10:28,467 INFO poll-trip_updates: trip_updates: 1047 entities -> 979 produced, 68 unchanged, 0 invalid
+## 02:10:37 curl NodePort localhost:18000/metrics
+http 000
+connection failed (no ready endpoints)
+## 02:10:38 FIX: kubectl rollout undo deployment/poller
+Warning: resource deployments/poller was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+deployment.apps/poller rolled back
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 of 1 updated replicas are available...
+deployment "poller" successfully rolled out
+NAME                      READY   STATUS    RESTARTS   AGE
+poller-769d67b4dc-v8hcs   1/1     Running   0          12s
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME     ENDPOINTS          AGE
+poller   10.244.0.19:8000   3m43s
+## 02:10:51 curl NodePort: http 200

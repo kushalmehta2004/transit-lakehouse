@@ -1,0 +1,69 @@
+## 02:11:03 UTC: patch liveness probe path /metrics -> /healthz
+deployment.apps/poller patched
+02:11:19  poller-6896b65fc4-hmdsg   1/1   Running   0     15s
+02:11:34  poller-6896b65fc4-hmdsg   1/1   Running   0     30s
+02:11:50  poller-6896b65fc4-hmdsg   1/1   Running   0     46s
+02:12:05  poller-6896b65fc4-hmdsg   1/1   Running   0     61s
+02:12:21  poller-6896b65fc4-hmdsg   1/1   Running   0     77s
+02:12:36  poller-6896b65fc4-hmdsg   1/1   Running   0     92s
+02:12:52  poller-6896b65fc4-hmdsg   1/1   Running   0     108s
+02:13:07  poller-6896b65fc4-hmdsg   1/1   Running   0     2m3s
+02:13:22  poller-6896b65fc4-hmdsg   1/1   Running   0     2m18s
+02:13:38  poller-6896b65fc4-hmdsg   1/1   Running   0     2m34s
+02:13:53  poller-6896b65fc4-hmdsg   1/1   Running   0     2m49s
+02:14:09  poller-6896b65fc4-hmdsg   1/1   Running   0     3m5s
+02:14:24  poller-6896b65fc4-hmdsg   1/1   Running   0     3m20s
+02:14:39  poller-6896b65fc4-hmdsg   1/1   Running   0     3m35s
+02:14:55  poller-6896b65fc4-hmdsg   1/1   Running   0     3m51s
+02:15:10  poller-6896b65fc4-hmdsg   1/1   Running   0     4m6s
+02:15:26  poller-6896b65fc4-hmdsg   1/1   Running   0     4m21s
+02:15:41  poller-6896b65fc4-hmdsg   1/1   Running   0     4m37s
+02:15:56  poller-6896b65fc4-hmdsg   1/1   Running   0     4m52s
+02:16:12  poller-6896b65fc4-hmdsg   1/1   Running   0     5m8s
+02:16:27  poller-6896b65fc4-hmdsg   1/1   Running   0     5m23s
+02:16:43  poller-6896b65fc4-hmdsg   1/1   Running   0     5m39s
+02:16:58  poller-6896b65fc4-hmdsg   1/1   Running   0     5m54s
+02:17:13  poller-6896b65fc4-hmdsg   1/1   Running   0     6m9s
+02:17:29  poller-6896b65fc4-hmdsg   1/1   Running   0     6m25s
+02:17:44  poller-6896b65fc4-hmdsg   1/1   Running   0     6m40s
+02:18:00  poller-6896b65fc4-hmdsg   1/1   Running   0     6m56s
+02:18:15  poller-6896b65fc4-hmdsg   1/1   Running   0     7m11s
+02:18:30  poller-6896b65fc4-hmdsg   1/1   Running   0     7m26s
+02:18:46  poller-6896b65fc4-hmdsg   1/1   Running   0     7m42s
+## 02:18:46 kubectl describe pod (state + events)
+    State:          Terminated
+      Reason:       Completed
+      Exit Code:    0
+      Started:      Tue, 20 Oct 2026 19:11:05 -0700
+      Finished:     Tue, 20 Oct 2026 19:11:05 -0700
+    Ready:          True
+    Restart Count:  0
+    State:          Running
+      Started:      Tue, 20 Oct 2026 19:11:06 -0700
+    Ready:          True
+    Restart Count:  0
+Events:
+  Type    Reason     Age    From               Message
+  ----    ------     ----   ----               -------
+  Normal  Scheduled  7m42s  default-scheduler  Successfully assigned transit-lakehouse/poller-6896b65fc4-hmdsg to transit-lakehouse-control-plane
+  Normal  Pulled     7m41s  kubelet            spec.initContainers{wait-for-deps}: Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+  Normal  Created    7m41s  kubelet            spec.initContainers{wait-for-deps}: Container created
+  Normal  Started    7m41s  kubelet            spec.initContainers{wait-for-deps}: Container started
+  Normal  Pulled     7m40s  kubelet            spec.containers{poller}: Container image "transit-lakehouse/poller:latest" already present on machine and can be accessed by the pod
+  Normal  Created    7m40s  kubelet            spec.containers{poller}: Container created
+  Normal  Started    7m40s  kubelet            spec.containers{poller}: Container started
+## 02:18:47 kubectl logs --previous (the app was healthy; the kubelet killed it)
+Error from server (BadRequest): previous terminated container "poller" in pod "poller-6896b65fc4-hmdsg" not found
+## 02:18:47 FIX: kubectl rollout undo deployment/poller
+Warning: resource deployments/poller was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+deployment.apps/poller rolled back
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 out of 1 new replicas have been updated...
+Waiting for deployment "poller" rollout to finish: 0 of 1 updated replicas are available...
+deployment "poller" successfully rolled out
+## 02:20:00 after fix (60 s later, restarts stay 0)
+NAME                      READY   STATUS    RESTARTS   AGE
+poller-769d67b4dc-gsstf   1/1     Running   0          72s
+/metrics 8000
+GET poller:8000/healthz -> 200

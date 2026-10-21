@@ -1,0 +1,62 @@
+# Postgres backing the Iceberg JDBC catalog (table -> current metadata pointer, atomic commits).
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-catalog-db
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: iceberg-catalog-db}
+spec:
+  selector: {app.kubernetes.io/name: iceberg-catalog-db}
+  ports:
+    - {name: postgres, port: 5432, targetPort: 5432}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: iceberg-catalog-db
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: iceberg-catalog-db, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  serviceName: iceberg-catalog-db
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: iceberg-catalog-db}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: iceberg-catalog-db, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16.4-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: POSTGRES_DB, value: iceberg}
+            - name: POSTGRES_USER
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: POSTGRES_USER}}
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: POSTGRES_PASSWORD}}
+            # subdirectory: a fresh volume may contain lost+found, which initdb refuses
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports:
+            - {name: postgres, containerPort: 5432}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d iceberg"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d iceberg"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/postgresql/data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 1Gi}

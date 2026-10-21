@@ -1,0 +1,52 @@
+# OPTIONAL addon (~150Mi). Reuses observability/prometheus.yml + alerts.yml unchanged via a
+# ConfigMap built from the files (see k8s/README.md). Targets that only exist in compose
+# (pipeline-exporter, statsd-exporter) simply show as DOWN in-cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: prometheus}
+spec:
+  selector: {app.kubernetes.io/name: prometheus}
+  ports:
+    - {name: web, port: 9090, targetPort: 9090}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: prometheus, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: prometheus, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.53.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=2d
+          ports:
+            - {name: web, containerPort: 9090}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: 9090}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: 9090}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-config}   # prometheus.yml + alerts.yml

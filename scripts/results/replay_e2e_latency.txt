@@ -1,0 +1,11 @@
+|source              |rows   |p50_s|p99_s|
+|replay:smoke2       |5994   |5.0  |9.9  |
+|replay:smoke        |5994   |5.0  |9.9  |
+|replay:baseline-500 |89994  |5.0  |9.9  |
+|replay:baseline-1000|179994 |5.0  |9.9  |
+|replay:baseline-2000|359994 |5.0  |9.9  |
+|replay:baseline-5000|899984 |6.2  |31.9 |
+|replay:fix6-5000    |899994 |5.9  |17.2 |
+|replay:fix6-10000   |1799994|5.0  |9.9  |
+|replay:fix6-15000   |2699987|16.0 |110.2|
+|replay:fix6-20000   |3597940|11.6 |88.1 |

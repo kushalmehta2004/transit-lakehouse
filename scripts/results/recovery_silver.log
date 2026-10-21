@@ -1,0 +1,14 @@
+baseline (max over last 3 min): 316
+stopped spark-silver; down for 300s
+started spark-silver; metric at restart = 272.0
+  +  12s metric=302.0 first_batch=None
+  +  22s metric=302.0 first_batch=None
+  +  32s metric=302.0 first_batch=None
+  +  43s metric=332.0 first_batch=None
+  +  53s metric=332.0 first_batch=None
+  +  63s metric=332.0 first_batch=None
+  +  73s metric=362.0 first_batch=None
+  +  83s metric=362.0 first_batch=18.8
+  +  93s metric=362.0 first_batch=18.8
+{"job": "silver", "service": "spark-silver", "down_seconds": 300, "baseline_max": 316.0, "metric_at_restart": 272.0, "peak": 362.0, "restart_to_first_batch_s": 18.8, "restart_to_caught_up_s": 103, "outage_total_s": 408}
+silver exit 0

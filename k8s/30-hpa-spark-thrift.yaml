@@ -1,0 +1,29 @@
+# The one HPA, on the Spark Thrift server. Why there and nowhere else:
+#   * spark-thrift is stateless: every replica is an independent query engine over the same Iceberg
+#     catalog (Postgres) + MinIO, so adding replicas adds JDBC/query capacity safely.
+#   * NOT the poller: each replica would poll the same MBTA feed and produce every event again
+#     (duplicates in Kafka); ingest volume is fixed by the feed, not by replicas.
+#   * NOT spark-bronze / spark-silver: a Structured Streaming checkpoint is single-writer; two
+#     replicas on one checkpoint race on offsets and state and corrupt it. They scale vertically
+#     (more cores/memory, more Kafka partitions), not by replicas.
+# Needs metrics-server (see k8s/README.md); CPU utilisation is relative to the 500m request.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: spark-thrift
+  namespace: transit-lakehouse
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: spark-thrift
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: {type: Utilization, averageUtilization: 70}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300   # a JVM replica takes ~1 min to start; don't flap

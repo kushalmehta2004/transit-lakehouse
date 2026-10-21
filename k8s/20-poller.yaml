@@ -1,0 +1,75 @@
+# GTFS-realtime poller -> Kafka (+ static schedule -> MinIO).
+# replicas: 1 and Recreate on purpose: two pollers would fetch the same feed and produce every
+# event twice (the poller's "unchanged entity" skip is per-process).
+apiVersion: v1
+kind: Service
+metadata:
+  name: poller
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: poller}
+spec:
+  type: NodePort
+  selector: {app.kubernetes.io/name: poller}
+  ports:
+    - {name: metrics, port: 8000, targetPort: 8000, nodePort: 30800}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poller
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: poller, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: poller}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: poller, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      initContainers:
+        - name: wait-for-deps
+          image: transit-lakehouse/poller:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c"]
+          args:
+            - |
+              import socket, time
+              for host, port in [("redpanda", 9092), ("minio", 9000)]:
+                  while True:
+                      try:
+                          socket.create_connection((host, port), 3).close(); print("ok", host); break
+                      except OSError:
+                          print("waiting for", host); time.sleep(3)
+      containers:
+        - name: poller
+          image: transit-lakehouse/poller:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: {name: pipeline-config}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_ACCESS_KEY_ID}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: lakehouse-creds, key: AWS_SECRET_ACCESS_KEY}}
+          ports:
+            - {name: metrics, containerPort: 8000}
+          readinessProbe:
+            httpGet: {path: /metrics, port: 8000}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /metrics, port: 8000}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            # steady ~70Mi; the daily static-schedule parse (145 MB stop_times.txt) peaks ~600Mi
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          volumeMounts:
+            - {name: schedule-cache, mountPath: /data/schedule}
+      volumes:
+        - name: schedule-cache
+          emptyDir: {}   # cache only; the shared copy lives in MinIO

@@ -1,0 +1,82 @@
+# Single-broker Redpanda. Clients use Service `redpanda:9092` (as in compose); the broker
+# advertises that same name, so producers/consumers reconnect through the Service.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: redpanda}
+spec:
+  selector: {app.kubernetes.io/name: redpanda}
+  ports:
+    - {name: kafka, port: 9092, targetPort: 9092}
+    - {name: admin, port: 9644, targetPort: 9644}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redpanda-hl   # headless: stable pod DNS for the StatefulSet (rpc address)
+  namespace: transit-lakehouse
+spec:
+  clusterIP: None
+  selector: {app.kubernetes.io/name: redpanda}
+  ports:
+    - {name: rpc, port: 33145, targetPort: 33145}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redpanda
+  namespace: transit-lakehouse
+  labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: transit-lakehouse}
+spec:
+  serviceName: redpanda-hl
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: redpanda}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: redpanda, app.kubernetes.io/part-of: transit-lakehouse}
+    spec:
+      securityContext: {fsGroup: 101}
+      containers:
+        - name: redpanda
+          image: docker.redpanda.com/redpandadata/redpanda:v24.2.18
+          imagePullPolicy: IfNotPresent
+          args:
+            - redpanda
+            - start
+            - --mode=dev-container
+            - --smp=1
+            - --memory=1G
+            - --default-log-level=warn
+            - --kafka-addr=internal://0.0.0.0:9092
+            - --advertise-kafka-addr=internal://redpanda:9092
+            - --rpc-addr=0.0.0.0:33145
+            - --advertise-rpc-addr=redpanda-0.redpanda-hl:33145
+          ports:
+            - {name: kafka, containerPort: 9092}
+            - {name: admin, containerPort: 9644}
+            - {name: rpc, containerPort: 33145}
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "rpk cluster health | grep -E 'Healthy:.+true'"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket: {port: 9092}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {memory: 1536Mi}   # --memory=1G + process overhead
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/redpanda/data}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests: {storage: 5Gi}

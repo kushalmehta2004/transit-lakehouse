@@ -1,0 +1,15 @@
+# Single-node local cluster for the transit lakehouse.
+#   kind create cluster --config k8s/kind-cluster.yaml
+# NodePorts are mapped to host ports that don't collide with the docker compose stack.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: transit-lakehouse
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30800   # poller /metrics          -> http://localhost:18000/metrics
+        hostPort: 18000
+      - containerPort: 30404   # bronze Spark UI          -> http://localhost:14040
+        hostPort: 14040
+      - containerPort: 30300   # Grafana (optional addon) -> http://localhost:13000
+        hostPort: 13000

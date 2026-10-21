@@ -45,7 +45,16 @@ def main() -> None:
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    stop.wait()
+    # If the JVM's SparkContext dies (e.g. heap OOM), exit non-zero so Docker's restart policy
+    # brings the server back; otherwise this wrapper would keep a dead container "running".
+    while not stop.wait(15):
+        try:
+            dead = spark.sparkContext._jsc.sc().isStopped()
+        except Exception:
+            dead = True
+        if dead:
+            log.error("SparkContext stopped; exiting so the container restarts")
+            os._exit(1)
     spark.stop()
 
 

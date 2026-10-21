@@ -21,6 +21,8 @@ with DAG(
     start_date=datetime(2026, 10, 19),
     catchup=False,
     max_active_runs=1,
+    # All compactions run inside the one Thrift JVM; three at once OOM'd its heap (phase 6).
+    max_active_tasks=1,
     default_args={"owner": "data-eng", "retries": 1, "retry_delay": timedelta(minutes=2),
                   "execution_timeout": timedelta(minutes=30)},
     doc_md=__doc__,
